@@ -1,0 +1,172 @@
+{
+  "metadata": {
+    "name": "BreachPath Demo Mission Network",
+    "version": "0.1.0",
+    "description": "Small demo cyber network for attack-path analysis.",
+    "created_for": "Bit 2 demo data"
+  },
+  "nodes": [
+    {
+      "id": "workstation-17",
+      "label": "Workstation 17",
+      "type": "workstation",
+      "zone": "user_zone",
+      "criticality": 35,
+      "description": "User workstation suspected of running suspicious commands."
+    },
+    {
+      "id": "email-server",
+      "label": "Email Server",
+      "type": "server",
+      "zone": "server_zone",
+      "criticality": 65,
+      "description": "Internal email server used by staff and automated notifications."
+    },
+    {
+      "id": "file-server",
+      "label": "File Server",
+      "type": "server",
+      "zone": "server_zone",
+      "criticality": 75,
+      "description": "Shared file server containing operational documents and saved scripts."
+    },
+    {
+      "id": "vpn-gateway",
+      "label": "VPN Gateway",
+      "type": "network_device",
+      "zone": "user_zone",
+      "criticality": 70,
+      "description": "Remote access gateway used by staff and partner systems."
+    },
+    {
+      "id": "admin-account",
+      "label": "Admin Account",
+      "type": "identity",
+      "zone": "identity_zone",
+      "criticality": 85,
+      "description": "Privileged administrator identity with access to core infrastructure."
+    },
+    {
+      "id": "domain-controller",
+      "label": "Domain Controller",
+      "type": "critical_asset",
+      "zone": "identity_zone",
+      "criticality": 100,
+      "description": "Central identity service controlling authentication and policy."
+    },
+    {
+      "id": "drone-ops-server",
+      "label": "Drone Operations Server",
+      "type": "critical_asset",
+      "zone": "operations_zone",
+      "criticality": 95,
+      "description": "Mission operations server used to coordinate drone tasking data."
+    },
+    {
+      "id": "logistics-db",
+      "label": "Logistics Database",
+      "type": "database",
+      "zone": "operations_zone",
+      "criticality": 90,
+      "description": "Database containing logistics, supply, and deployment information."
+    },
+    {
+      "id": "monitoring-system",
+      "label": "Monitoring System",
+      "type": "security_tool",
+      "zone": "security_zone",
+      "criticality": 80,
+      "description": "Security monitoring platform collecting alerts from key systems."
+    },
+    {
+      "id": "backup-server",
+      "label": "Backup Server",
+      "type": "server",
+      "zone": "server_zone",
+      "criticality": 70,
+      "description": "Backup service with stored recovery data for important systems."
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-email-to-workstation",
+      "source": "email-server",
+      "target": "workstation-17",
+      "relationship": "can_access",
+      "risk_weight": 45,
+      "description": "Email attachments and links can reach the user workstation."
+    },
+    {
+      "id": "edge-workstation-to-file-server",
+      "source": "workstation-17",
+      "target": "file-server",
+      "relationship": "can_access",
+      "risk_weight": 60,
+      "description": "The workstation has access to shared files on the file server."
+    },
+    {
+      "id": "edge-file-server-to-admin-account",
+      "source": "file-server",
+      "target": "admin-account",
+      "relationship": "stores_credentials",
+      "risk_weight": 90,
+      "description": "The file server stores credentials that could expose the admin account."
+    },
+    {
+      "id": "edge-admin-account-to-domain-controller",
+      "source": "admin-account",
+      "target": "domain-controller",
+      "relationship": "controls",
+      "risk_weight": 95,
+      "description": "The admin account can control the domain controller."
+    },
+    {
+      "id": "edge-domain-controller-to-drone-ops",
+      "source": "domain-controller",
+      "target": "drone-ops-server",
+      "relationship": "grants_access",
+      "risk_weight": 95,
+      "description": "The domain controller can grant access to the drone operations server."
+    },
+    {
+      "id": "edge-workstation-to-vpn-gateway",
+      "source": "workstation-17",
+      "target": "vpn-gateway",
+      "relationship": "authenticates_to",
+      "risk_weight": 55,
+      "description": "The workstation can authenticate to the VPN gateway."
+    },
+    {
+      "id": "edge-vpn-gateway-to-logistics-db",
+      "source": "vpn-gateway",
+      "target": "logistics-db",
+      "relationship": "can_access",
+      "risk_weight": 85,
+      "description": "The VPN gateway can access the logistics database."
+    },
+    {
+      "id": "edge-backup-server-to-domain-controller",
+      "source": "backup-server",
+      "target": "domain-controller",
+      "relationship": "backs_up",
+      "risk_weight": 70,
+      "description": "The backup server stores recovery data for the domain controller."
+    },
+    {
+      "id": "edge-monitoring-to-file-server",
+      "source": "monitoring-system",
+      "target": "file-server",
+      "relationship": "monitors",
+      "risk_weight": 25,
+      "description": "The monitoring system collects file server security events."
+    },
+    {
+      "id": "edge-file-server-to-backup-server",
+      "source": "file-server",
+      "target": "backup-server",
+      "relationship": "can_access",
+      "risk_weight": 50,
+      "description": "The file server can reach the backup server for scheduled backups."
+    }
+  ]
+}

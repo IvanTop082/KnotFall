@@ -1,0 +1,47 @@
+[
+  {
+    "id": "improvement-001",
+    "title": "Isolate File Server",
+    "action_type": "isolate_node",
+    "target_node_id": "file-server",
+    "expected_effect": "Blocks attacker movement from the compromised workstation toward stored credentials.",
+    "operational_cost": 75,
+    "reason": "The file server sits on a high-risk path to the admin account and domain controller."
+  },
+  {
+    "id": "improvement-002",
+    "title": "Disable Admin Account",
+    "action_type": "disable_account",
+    "target_node_id": "admin-account",
+    "expected_effect": "Prevents the exposed admin identity from controlling the domain controller.",
+    "operational_cost": 65,
+    "reason": "The admin account has high privilege and directly controls a critical identity asset."
+  },
+  {
+    "id": "improvement-003",
+    "title": "Segment Domain Controller",
+    "action_type": "segment_network",
+    "target_node_id": "domain-controller",
+    "expected_effect": "Reduces access from adjacent systems and limits movement toward mission operations.",
+    "operational_cost": 85,
+    "reason": "The domain controller is the highest-criticality node and grants access to critical systems."
+  },
+  {
+    "id": "improvement-004",
+    "title": "Remove Stored Credentials From File Server",
+    "action_type": "remove_stored_credentials",
+    "target_node_id": "file-server",
+    "expected_effect": "Removes the credential exposure path from the file server to the admin account.",
+    "operational_cost": 35,
+    "reason": "Stored credentials create a direct escalation route from normal server access to admin control."
+  },
+  {
+    "id": "improvement-005",
+    "title": "Improve Monitoring on Workstation 17",
+    "action_type": "improve_monitoring",
+    "target_node_id": "workstation-17",
+    "expected_effect": "Improves detection of suspicious commands before lateral movement succeeds.",
+    "operational_cost": 20,
+    "reason": "The workstation is a likely starting point for the demo attack path."
+  }
+]

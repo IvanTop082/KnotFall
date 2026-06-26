@@ -1,0 +1,26 @@
+[
+  {
+    "id": "alert-001",
+    "title": "Suspicious PowerShell on Workstation 17",
+    "compromised_node_id": "workstation-17",
+    "severity": "high",
+    "suspected_technique": "PowerShell execution",
+    "description": "Unusual PowerShell activity was detected on a user workstation."
+  },
+  {
+    "id": "alert-002",
+    "title": "Unusual VPN Login Through VPN Gateway",
+    "compromised_node_id": "vpn-gateway",
+    "severity": "medium",
+    "suspected_technique": "Anomalous remote access",
+    "description": "A VPN login occurred from an unexpected location and time window."
+  },
+  {
+    "id": "alert-003",
+    "title": "Suspicious Email Activity From Email Server",
+    "compromised_node_id": "email-server",
+    "severity": "medium",
+    "suspected_technique": "Phishing or malicious email relay",
+    "description": "The email server sent a spike of unusual messages with suspicious links."
+  }
+]

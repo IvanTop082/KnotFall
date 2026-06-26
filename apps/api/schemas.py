@@ -51,5 +51,35 @@ class AttackPathResponse(BaseModel):
     results: list[AttackPathResult]
 
 
+class RecommendationResult(BaseModel):
+    improvement_id: str
+    title: str
+    action_type: str
+    target_node_id: str
+    expected_effect: str
+    operational_cost: int
+    baseline_total_risk: int
+    after_total_risk: int
+    risk_reduction: int
+    recommendation_score: int
+    paths_before: int
+    paths_after: int
+    paths_removed_count: int
+    critical_assets_protected: list[str]
+    recommendation_level: str
+    reason: str
+    tradeoff: str
+    why_not_enough: str | None = None
+
+
+class RecommendationResponse(BaseModel):
+    compromised_node: str
+    baseline_total_risk: int
+    recommendations_count: int
+    best_recommendation_id: str | None
+    message: str
+    results: list[RecommendationResult]
+
+
 class ErrorResponse(BaseModel):
     detail: str

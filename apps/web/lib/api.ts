@@ -1,4 +1,9 @@
-import type { AttackPathResponse, GraphResponse, HealthResponse } from "./types";
+import type {
+  AttackPathResponse,
+  GraphResponse,
+  HealthResponse,
+  RecommendationResponse,
+} from "./types";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -37,5 +42,13 @@ export function getAttackPaths(
 ): Promise<AttackPathResponse> {
   return fetchJson<AttackPathResponse>(
     `/attack-paths/${encodeURIComponent(compromisedNodeId)}`,
+  );
+}
+
+export function getRecommendations(
+  compromisedNodeId: string,
+): Promise<RecommendationResponse> {
+  return fetchJson<RecommendationResponse>(
+    `/recommendations/${encodeURIComponent(compromisedNodeId)}`,
   );
 }

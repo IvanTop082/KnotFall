@@ -1,10 +1,10 @@
 # BreachPath API
 
-This is the Bit 3 FastAPI backend for BreachPath.
+This is the FastAPI backend for BreachPath.
 
-The backend loads the local demo cyber network, finds bounded attack paths from a compromised node to critical assets, calculates explainable risk scores, and returns JSON for the future frontend.
+The backend loads the local demo cyber network, finds bounded attack paths from a compromised node to critical assets, calculates explainable risk scores, simulates defensive improvements, and returns JSON for the frontend.
 
-It does not connect to TuringDB yet. The path-finding code is modular so a future TuringDB-backed path finder can replace the local JSON implementation.
+It does not connect to TuringDB yet. The path-finding and recommendation code is modular so future TuringDB-backed path finding and branch-based simulation can replace the local JSON implementation.
 
 ## Install Dependencies
 
@@ -27,6 +27,7 @@ uvicorn apps.api.main:app --reload --port 8000
 - http://localhost:8000/health
 - http://localhost:8000/graph
 - http://localhost:8000/attack-paths/workstation-17
+- http://localhost:8000/recommendations/workstation-17
 
 ## Example Commands
 
@@ -34,4 +35,5 @@ uvicorn apps.api.main:app --reload --port 8000
 curl http://localhost:8000/health
 curl http://localhost:8000/graph
 curl http://localhost:8000/attack-paths/workstation-17
+curl http://localhost:8000/recommendations/workstation-17
 ```

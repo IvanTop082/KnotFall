@@ -4,10 +4,21 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 
 import NodeSelector from "../components/NodeSelector";
+import RecommendationsPanel from "../components/RecommendationsPanel";
 import RiskPanel from "../components/RiskPanel";
 import StatusCard from "../components/StatusCard";
-import { getAttackPaths, getGraph, getHealth } from "../lib/api";
-import type { AttackPathResponse, GraphResponse, RiskLevel } from "../lib/types";
+import {
+  getAttackPaths,
+  getGraph,
+  getHealth,
+  getRecommendations,
+} from "../lib/api";
+import type {
+  AttackPathResponse,
+  GraphResponse,
+  RecommendationResponse,
+  RiskLevel,
+} from "../lib/types";
 
 const GraphView = dynamic(() => import("../components/GraphView"), {
   ssr: false,
@@ -48,11 +59,17 @@ export default function HomePage() {
   const [attackPaths, setAttackPaths] = useState<AttackPathResponse | null>(
     null,
   );
+  const [recommendations, setRecommendations] =
+    useState<RecommendationResponse | null>(null);
   const [backendStatus, setBackendStatus] = useState("checking");
   const [graphError, setGraphError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [recommendationError, setRecommendationError] = useState<string | null>(
+    null,
+  );
   const [isGraphLoading, setIsGraphLoading] = useState(true);
   const [isAnalysisLoading, setIsAnalysisLoading] = useState(false);
+  const [isRecommendationLoading, setIsRecommendationLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -98,7 +115,9 @@ export default function HomePage() {
   useEffect(() => {
     if (!selectedNodeId) {
       setAttackPaths(null);
+      setRecommendations(null);
       setAnalysisError(null);
+      setRecommendationError(null);
       return;
     }
 
@@ -106,27 +125,43 @@ export default function HomePage() {
 
     async function analyseNode() {
       setIsAnalysisLoading(true);
+      setIsRecommendationLoading(true);
       setAnalysisError(null);
+      setRecommendationError(null);
 
-      try {
-        const response = await getAttackPaths(selectedNodeId);
-        if (isMounted) {
-          setAttackPaths(response);
-        }
-      } catch (error) {
-        if (isMounted) {
-          setAttackPaths(null);
-          setAnalysisError(
-            error instanceof Error
-              ? error.message
-              : "Could not analyse attack paths.",
-          );
-        }
-      } finally {
-        if (isMounted) {
-          setIsAnalysisLoading(false);
-        }
+      const [attackPathResult, recommendationResult] = await Promise.allSettled([
+        getAttackPaths(selectedNodeId),
+        getRecommendations(selectedNodeId),
+      ]);
+
+      if (!isMounted) {
+        return;
       }
+
+      if (attackPathResult.status === "fulfilled") {
+        setAttackPaths(attackPathResult.value);
+      } else {
+        setAttackPaths(null);
+        setAnalysisError(
+          attackPathResult.reason instanceof Error
+            ? attackPathResult.reason.message
+            : "Could not analyse attack paths.",
+        );
+      }
+
+      if (recommendationResult.status === "fulfilled") {
+        setRecommendations(recommendationResult.value);
+      } else {
+        setRecommendations(null);
+        setRecommendationError(
+          recommendationResult.reason instanceof Error
+            ? recommendationResult.reason.message
+            : "Could not simulate recommendations.",
+        );
+      }
+
+      setIsAnalysisLoading(false);
+      setIsRecommendationLoading(false);
     }
 
     analyseNode();
@@ -202,6 +237,13 @@ export default function HomePage() {
             response={attackPaths}
             isLoading={isAnalysisLoading}
             error={analysisError}
+          />
+
+          <RecommendationsPanel
+            selectedNodeId={selectedNodeId}
+            response={recommendations}
+            isLoading={isRecommendationLoading}
+            error={recommendationError}
           />
         </aside>
 

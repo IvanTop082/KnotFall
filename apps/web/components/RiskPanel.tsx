@@ -75,13 +75,13 @@ export default function RiskPanel({
                   {result.asset_label}
                 </h3>
                 <p className="mt-1 text-xs uppercase text-slate-500">
-                  {result.asset_type.replace("_", " ")} · {result.hops} hops
+                  {result.asset_type.replace("_", " ")} - {result.hops} hops
                 </p>
               </div>
               <span
                 className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${riskClasses[result.risk_level]}`}
               >
-                {result.risk_level} · {result.risk_score}
+                {result.risk_level} - {result.risk_score}
               </span>
             </div>
 

@@ -15,6 +15,7 @@ export type GraphZone =
   | "security_zone";
 
 export type RiskLevel = "low" | "medium" | "high";
+export type RecommendationLevel = "strong" | "useful" | "limited" | "weak";
 
 export interface GraphNode {
   id: string;
@@ -67,6 +68,36 @@ export interface AttackPathResponse {
   critical_assets_found: number;
   message: string;
   results: AttackPathResult[];
+}
+
+export interface RecommendationResult {
+  improvement_id: string;
+  title: string;
+  action_type: string;
+  target_node_id: string;
+  expected_effect: string;
+  operational_cost: number;
+  baseline_total_risk: number;
+  after_total_risk: number;
+  risk_reduction: number;
+  recommendation_score: number;
+  paths_before: number;
+  paths_after: number;
+  paths_removed_count: number;
+  critical_assets_protected: string[];
+  recommendation_level: RecommendationLevel;
+  reason: string;
+  tradeoff: string;
+  why_not_enough: string | null;
+}
+
+export interface RecommendationResponse {
+  compromised_node: string;
+  baseline_total_risk: number;
+  recommendations_count: number;
+  best_recommendation_id: string | null;
+  message: string;
+  results: RecommendationResult[];
 }
 
 export interface HealthResponse {

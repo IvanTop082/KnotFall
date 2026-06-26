@@ -4,7 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import DEFAULT_MAX_DEPTH, DEFAULT_MAX_PATHS_PER_ASSET
 from .graph_loader import GraphDataError, load_demo_network
 from .path_finder import LocalJSONPathFinder
-from .schemas import AttackPathResponse, ErrorResponse, GraphResponse
+from .recommendations import LocalRecommendationEngine
+from .schemas import (
+    AttackPathResponse,
+    ErrorResponse,
+    GraphResponse,
+    RecommendationResponse,
+)
 
 
 app = FastAPI(
@@ -81,6 +87,33 @@ def get_attack_paths(
         "message": message,
         "results": results,
     }
+
+
+@app.get(
+    "/recommendations/{compromised_node_id}",
+    response_model=RecommendationResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+def get_recommendations(
+    compromised_node_id: str,
+    max_depth: int = Query(DEFAULT_MAX_DEPTH, ge=1, le=20),
+    max_paths_per_asset: int = Query(DEFAULT_MAX_PATHS_PER_ASSET, ge=1, le=20),
+):
+    try:
+        engine = LocalRecommendationEngine()
+        return engine.recommend(
+            compromised_node_id=compromised_node_id,
+            max_depth=max_depth,
+            max_paths_per_asset=max_paths_per_asset,
+        )
+    except ValueError as error:
+        if str(error).startswith("Node not found:"):
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except GraphDataError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 def _load_graph_or_error():

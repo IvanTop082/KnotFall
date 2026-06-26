@@ -14,6 +14,14 @@ FastAPI backend. It loads demo graph data, finds bounded attack paths, calculate
 
 The current Bit 3 backend uses local JSON data through a `LocalJSONPathFinder`. This is designed so a future `TuringDBPathFinder` can replace the local path-finding implementation without changing the API shape.
 
+### Recommendation simulation layer
+
+The current recommendation layer uses a local JSON graph copy. Each possible defensive improvement is applied to a simulated graph, attack paths are recalculated, and before/after risk is compared.
+
+This means recommendations are ranked by measured simulated impact instead of hardcoded advice. The MVP calculates risk reduction, subtracts operational cost, and returns a ranked list of defensive options.
+
+Later, this should map to TuringDB branching and versioning. Each defensive action can be tested in a separate graph branch, then compared with graph diffs before a defender chooses what to change.
+
 ### data
 
 Stores demo graph data for the first MVP, starting with JSON.

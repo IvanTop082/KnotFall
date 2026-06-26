@@ -17,3 +17,7 @@ Added a FastAPI backend that loads the demo cyber network, finds bounded attack 
 ## Bit 4: Visual frontend
 
 Added a Next.js frontend that loads the demo cyber graph from the FastAPI backend, lets the user select a compromised node, requests attack path analysis, and visualises dangerous paths with a risk explanation panel.
+
+## Bit 5: Recommendation simulation engine
+
+Added a local recommendation engine that tests possible defensive improvements by simulating each action, recalculating attack-path risk, comparing before/after risk, and ranking options by risk reduction minus operational cost. The design is modular so this local simulation can later be replaced by TuringDB versioned branching and diffing.

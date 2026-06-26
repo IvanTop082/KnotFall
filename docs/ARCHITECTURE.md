@@ -10,7 +10,9 @@ Future Next.js frontend. It will show the visual graph, selected compromised nod
 
 ### apps/api
 
-Future FastAPI backend. It will load graph data, find attack paths, calculate risk, and return recommendations.
+FastAPI backend. It loads demo graph data, finds bounded attack paths, calculates explainable risk, and returns JSON for the future frontend.
+
+The current Bit 3 backend uses local JSON data through a `LocalJSONPathFinder`. This is designed so a future `TuringDBPathFinder` can replace the local path-finding implementation without changing the API shape.
 
 ### data
 

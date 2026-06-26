@@ -6,7 +6,7 @@ This document describes the planned architecture for BreachPath.
 
 ### apps/web
 
-Future Next.js frontend. It will show the visual graph, selected compromised node, attack paths, risk score, and recommended improvements.
+Next.js frontend. It loads the graph from the FastAPI backend, lets the user select a compromised node, displays attack path results, and visualises dangerous paths in a React Flow graph.
 
 ### apps/api
 

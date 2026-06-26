@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 from .config import DEFAULT_MAX_DEPTH, DEFAULT_MAX_PATHS_PER_ASSET
 from .graph_loader import GraphDataError, load_demo_network
@@ -10,6 +11,14 @@ app = FastAPI(
     title="BreachPath API",
     description="Attack-path analysis API for the BreachPath MVP.",
     version="0.1.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

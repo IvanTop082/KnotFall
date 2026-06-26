@@ -1,0 +1,35 @@
+@import "reactflow/dist/style.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #07090f;
+  color: #e5e7eb;
+}
+
+.react-flow__controls-button {
+  background: #111827;
+  border-color: #334155;
+  color: #e5e7eb;
+}
+
+.react-flow__controls-button:hover {
+  background: #1f2937;
+}
+
+.react-flow__attribution {
+  background: rgba(15, 23, 42, 0.8);
+  color: #94a3b8;
+}

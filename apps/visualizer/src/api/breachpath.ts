@@ -1,16 +1,94 @@
 export type BreachPathAnalysisEdgeRef = {
+  id?: string | null
   source: string
   target: string
   relationship?: string | null
+  blocked_or_reduced_by?: string[]
 }
 
 export type BreachPathAnalysisPath = {
+  path_id?: string | null
   target: string
   risk_score: number
   risk_level: string
   nodes: string[]
   edges: BreachPathAnalysisEdgeRef[]
   explanation: string
+  edge_ids?: string[]
+  edge_types?: string[]
+  target_node?: string | null
+  target_criticality?: number | null
+  score?: number | null
+  severity?: string | null
+  why_this_path_matters?: string | null
+  blocked_or_reduced_by?: string[]
+}
+
+export type BreachPathRankedPath = {
+  path_id: string
+  nodes: string[]
+  edges: string[]
+  edge_refs?: BreachPathAnalysisEdgeRef[]
+  edge_types: string[]
+  target_node: string
+  target_criticality: number
+  score: number
+  severity: string
+  why_this_path_matters: string
+  blocked_or_reduced_by: string[]
+}
+
+export type BreachPathBlockedPath = {
+  path_id: string
+  nodes: string[]
+  edges?: string[]
+  edge_refs?: BreachPathAnalysisEdgeRef[]
+  edge_types?: string[]
+  target_node?: string | null
+  reason: string
+  severity: string
+}
+
+export type BreachPathTraversalEdgeDecision = {
+  edge_id: string
+  from: string
+  to: string
+  edge_type: string
+  direction: string
+  decision: string
+  reason: string
+  from_label?: string | null
+  to_label?: string | null
+  score?: number | null
+}
+
+export type BreachPathRankedButNotHighlightedPath = {
+  nodes: string[]
+  edges?: string[]
+  edge_types?: string[]
+  score: number
+  reason: string
+}
+
+export type BreachPathConnectedButNotHighlighted = {
+  node_id: string
+  label: string
+  reason: string
+  edge_id?: string | null
+  edge_type?: string | null
+}
+
+export type BreachPathTraversalExplanation = {
+  source_node: string
+  simulation_type: BreachPathSimulationType | string
+  highlight_threshold: number
+  max_highlighted_paths: number
+  followed_edges: BreachPathTraversalEdgeDecision[]
+  skipped_edges: BreachPathTraversalEdgeDecision[]
+  ranked_but_not_highlighted_paths: BreachPathRankedButNotHighlightedPath[]
+  connected_but_not_highlighted: BreachPathConnectedButNotHighlighted[]
+  reachable_nodes: string[]
+  reachable_edges: BreachPathAnalysisEdgeRef[]
 }
 
 export type BreachPathAnalysisRecommendation = {
@@ -19,6 +97,16 @@ export type BreachPathAnalysisRecommendation = {
   priority: string
   estimated_risk_reduction: number
   explanation: string
+  severity?: string | null
+  reason?: string | null
+  triggered_by_path?: string[]
+  affected_nodes?: string[]
+  relevant_edge_types?: string[]
+  simulation_type?: BreachPathSimulationType | string | null
+  what_it_fixes?: string | null
+  expected_effect?: string | null
+  confidence?: string | null
+  action_steps?: string[]
 }
 
 export type BreachPathSimulationType =
@@ -34,6 +122,11 @@ export type BreachPathCompromisedNodeAnalysis = {
     label: string
     type: string
   }
+  source_node?: {
+    id: string
+    label: string
+    type: string
+  } | null
   network_id?: string | null
   version?: number | null
   graph_hash?: string | null
@@ -46,11 +139,18 @@ export type BreachPathCompromisedNodeAnalysis = {
     highest_risk_score: number
     risk_level: string
   }
+  summary_text?: string | null
   risk_score: number
   risk_level: string
   highlighted_nodes: string[]
   highlighted_edges: BreachPathAnalysisEdgeRef[]
   paths: BreachPathAnalysisPath[]
+  top_paths?: BreachPathRankedPath[]
+  affected_nodes?: string[]
+  critical_nodes_reached?: string[]
+  blocked_or_reduced_paths?: BreachPathBlockedPath[]
+  low_relevance_nodes?: string[]
+  traversal_explanation?: BreachPathTraversalExplanation | null
   recommendations: BreachPathAnalysisRecommendation[]
   explanation: string
   followed_edge_types: string[]

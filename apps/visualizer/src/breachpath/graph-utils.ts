@@ -284,7 +284,7 @@ export function edgeToGraphEdge(edge: TuringEdge): BreachPathGraphEdge {
     label: fallbackTemplate?.label ?? 'Can access',
     risk_weight: fallbackTemplate?.risk_weight ?? 55,
     direction: fallbackTemplate?.direction ?? 'source_to_target',
-    risk_can_spread_both_ways: fallbackTemplate?.risk_can_spread_both_ways ?? true,
+    risk_can_spread_both_ways: fallbackTemplate?.risk_can_spread_both_ways ?? false,
     notes: 'Imported visualizer edge without BreachPath edge metadata.',
   }
 }

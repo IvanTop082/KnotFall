@@ -9,6 +9,10 @@ function formatRiskLevel(level: string | undefined) {
   return level.charAt(0).toUpperCase() + level.slice(1)
 }
 
+function formatPath(nodeIds: string[] | undefined) {
+  return nodeIds?.length ? nodeIds.join(' -> ') : 'No path supplied'
+}
+
 export function BreachPathAnalysisPanel() {
   const selectedNode = useBreachPathStore((state) => state.selectedNode)
   const analysis = useBreachPathStore((state) => state.analysis)
@@ -36,6 +40,8 @@ export function BreachPathAnalysisPanel() {
   const setAnimateExposurePaths = useBreachPathStore(
     (state) => state.setAnimateExposurePaths
   )
+  const showAllReachable = useBreachPathStore((state) => state.showAllReachable)
+  const setShowAllReachable = useBreachPathStore((state) => state.setShowAllReachable)
   const runAnalysisForSelectedNode = useBreachPathStore(
     (state) => state.runAnalysisForSelectedNode
   )
@@ -54,6 +60,7 @@ export function BreachPathAnalysisPanel() {
     [canvasNodes, canvasEdges]
   )
   const currentGraphFingerprint = useMemo(() => graphFingerprint(currentGraph), [currentGraph])
+  const traversal = analysis?.traversal_explanation
 
   const runSelectedAnalysis = () => {
     runAnalysisForSelectedNode(currentGraph, currentGraphFingerprint, simulationType, {
@@ -76,15 +83,41 @@ export function BreachPathAnalysisPanel() {
     )
   }
 
+  const rankedPaths = useMemo(
+    () =>
+      analysis?.top_paths?.length
+        ? analysis.top_paths
+        : analysis?.paths.map((path) => ({
+            path_id: path.path_id ?? `${path.target}-${path.nodes.join('-')}`,
+            nodes: path.nodes,
+            edges: path.edge_ids ?? [],
+            edge_refs: path.edges,
+            edge_types: path.edge_types ?? path.edges.flatMap((edge) => edge.relationship ?? []),
+            target_node: path.target_node ?? path.target,
+            target_criticality: path.target_criticality ?? 0,
+            score: path.score ?? path.risk_score,
+            severity: path.severity ?? path.risk_level,
+            why_this_path_matters: path.why_this_path_matters ?? path.explanation,
+            blocked_or_reduced_by: path.blocked_or_reduced_by ?? [],
+          })) ?? [],
+    [analysis]
+  )
+
   const highestRiskPath = useMemo(() => {
-    if (!analysis?.paths.length) return undefined
-    return [...analysis.paths].sort((a, b) => b.risk_score - a.risk_score)[0]
-  }, [analysis])
+    if (!rankedPaths.length) return undefined
+    return [...rankedPaths].sort((a, b) => b.score - a.score)[0]
+  }, [rankedPaths])
 
   const criticalSystems = useMemo(() => {
     if (!analysis) return []
-    return [...new Set(analysis.paths.map((path) => path.target))]
-  }, [analysis])
+    return [
+      ...new Set(
+        analysis.critical_nodes_reached?.length
+          ? analysis.critical_nodes_reached
+          : rankedPaths.map((path) => path.target_node)
+      ),
+    ]
+  }, [analysis, rankedPaths])
 
   const relationshipTypesFollowed = useMemo(() => {
     if (!analysis) return []
@@ -99,13 +132,22 @@ export function BreachPathAnalysisPanel() {
 
   const affectedDeviceIds = useMemo(() => {
     if (!analysis) return []
-    return analysis.highlighted_nodes.filter((nodeId) => nodeId !== analysis.compromised_node.id)
+    return analysis.affected_nodes?.length
+      ? analysis.affected_nodes
+      : analysis.highlighted_nodes.filter((nodeId) => nodeId !== analysis.compromised_node.id)
   }, [analysis])
+  const followedReasonByEdgeId = useMemo(() => {
+    const reasons = new Map<string, string>()
+    for (const edge of traversal?.followed_edges ?? []) {
+      reasons.set(edge.edge_id, edge.reason)
+    }
+    return reasons
+  }, [traversal?.followed_edges])
 
   const fallbackRecommendations = [
-    'No high/critical devices were reached, but connected devices may still be exposed.',
-    'Mark important devices as high/critical to improve analysis.',
-    'Consider separating low-trust devices such as printers, smart TVs, and IoT devices.',
+    'No high-relevance recommendation was triggered for this simulation.',
+    'Connected devices are intentionally not treated as affected unless they appear on a ranked path.',
+    'If this seems wrong, check node criticality, edge type, and firewall/segmentation metadata.',
   ]
 
   if (!builderDrawerOpen || activePanel !== 'analysis') return null
@@ -239,6 +281,17 @@ export function BreachPathAnalysisPanel() {
             />
             Animate exposure paths
           </label>
+          <label className="mt-2 flex items-center gap-2 text-xs text-content-secondary">
+            <input
+              type="checkbox"
+              checked={showAllReachable}
+              onChange={(event) => setShowAllReachable(event.target.checked)}
+            />
+            Show all reachable nodes
+          </label>
+          <p className="mt-1 text-xs text-content-secondary">
+            Reachable debug view uses muted colours; ranked critical paths stay strongest.
+          </p>
         </section>
 
         {!selectedNode && status !== 'error' && (
@@ -357,7 +410,8 @@ export function BreachPathAnalysisPanel() {
                 Why these devices are affected
               </h3>
               <p className="mt-2 text-xs leading-5 text-content-secondary">
-                {analysis.explanation ||
+                {analysis.summary_text ||
+                  analysis.explanation ||
                   'BreachPath follows typed relationships from the selected device through the current graph.'}
               </p>
               {affectedDeviceIds.length ? (
@@ -370,9 +424,15 @@ export function BreachPathAnalysisPanel() {
                 </ul>
               ) : (
                 <p className="mt-2 text-sm text-content-secondary">
-                  No other connected devices were reached from this node.
+                  No high-relevance affected devices were found for this simulation.
                 </p>
               )}
+              {analysis.low_relevance_nodes?.length ? (
+                <p className="mt-2 text-xs text-content-secondary">
+                  Connected but not highlighted for this simulation:{' '}
+                  {analysis.low_relevance_nodes.join(', ')}
+                </p>
+              ) : null}
             </section>
 
             <section>
@@ -396,9 +456,8 @@ export function BreachPathAnalysisPanel() {
                 </p>
               )}
               <p className="mt-2 text-xs leading-5 text-content-secondary">
-                Home-style relationships such as same_network, can_access, and routes_through
-                can spread risk both ways. Admin, credential, control, backup, monitoring, and
-                dependency relationships remain directional.
+                `same_network` is bidirectional by default. Other relationships are directional
+                unless the edge was explicitly marked bidirectional in the builder.
               </p>
             </section>
 
@@ -417,37 +476,59 @@ export function BreachPathAnalysisPanel() {
               ) : (
                 <div className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-3 text-sm text-yellow-100">
                   <p>
-                    No critical devices were reached. This may be because no connected devices are
-                    marked as high/critical.
+                    No critical devices were reached by a high-relevance path for this simulation.
                   </p>
                   <p className="mt-2 text-xs">
-                    Tip: mark important devices such as router, NAS, admin account, work laptop, or
-                    security camera as high/critical to make the analysis more useful.
+                    Connected does not automatically mean affected or critical; BreachPath only
+                    highlights ranked paths returned by the backend brain.
                   </p>
                 </div>
               )}
             </section>
 
             <section>
-              <h3 className="text-sm font-semibold text-content-primary">Exposure paths</h3>
-              {analysis.paths.length ? (
+              <h3 className="text-sm font-semibold text-content-primary">Why this path?</h3>
+              {rankedPaths.length ? (
                 <div className="mt-2 space-y-2">
-                  {analysis.paths.map((path) => (
-                    <article
-                      key={`${path.target}-${path.nodes.join('-')}`}
-                      className="rounded border border-grey-600 bg-grey-900/70 p-2"
-                    >
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <strong className="text-content-primary">{path.target}</strong>
-                        <span className="text-orange-100">
-                          {path.risk_level} / {path.risk_score}
-                        </span>
-                      </div>
-                      <p className="mt-2 text-xs leading-5 text-content-secondary">
-                        {path.nodes.join(' -> ')}
-                      </p>
-                    </article>
-                  ))}
+                  {rankedPaths.map((path) => {
+                    const followedReasons = path.edges
+                      .map((edgeId) => followedReasonByEdgeId.get(edgeId))
+                      .filter((reason): reason is string => Boolean(reason))
+
+                    return (
+                      <article
+                        key={path.path_id}
+                        className="rounded border border-grey-600 bg-grey-900/70 p-2"
+                      >
+                        <div className="flex items-center justify-between gap-2 text-xs">
+                          <strong className="text-content-primary">{path.target_node}</strong>
+                          <span className="text-orange-100">
+                            {path.severity} / {path.score}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-xs leading-5 text-content-secondary">
+                          {formatPath(path.nodes)}
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-content-secondary">
+                          {path.why_this_path_matters}
+                        </p>
+                        {path.edge_types.length ? (
+                          <p className="mt-2 text-xs text-content-secondary">
+                            Edge types: {path.edge_types.join(', ')}
+                          </p>
+                        ) : null}
+                        {followedReasons.length ? (
+                          <ul className="mt-2 space-y-1 text-xs text-content-secondary">
+                            {followedReasons.map((reason) => (
+                              <li key={reason} className="rounded bg-grey-800 px-2 py-1">
+                                {reason}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </article>
+                    )
+                  })}
                 </div>
               ) : (
                 <p className="mt-2 text-sm text-content-secondary">
@@ -456,16 +537,126 @@ export function BreachPathAnalysisPanel() {
               )}
             </section>
 
+            {traversal?.connected_but_not_highlighted.length ? (
+              <section>
+                <h3 className="text-sm font-semibold text-content-primary">
+                  Connected but not highlighted
+                </h3>
+                <div className="mt-2 space-y-2">
+                  {traversal.connected_but_not_highlighted.map((item) => (
+                    <article
+                      key={`${item.node_id}-${item.edge_id ?? item.reason}`}
+                      className="rounded border border-grey-600 bg-grey-900/70 p-2"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <strong className="text-content-primary">{item.label}</strong>
+                        <span className="text-content-secondary">{item.node_id}</span>
+                      </div>
+                      <p className="mt-2 text-xs leading-5 text-content-secondary">
+                        Reason: {item.reason}
+                      </p>
+                      {item.edge_type ? (
+                        <p className="mt-1 text-xs text-content-secondary">
+                          Edge: {item.edge_type}
+                          {item.edge_id ? ` (${item.edge_id})` : ''}
+                        </p>
+                      ) : null}
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {analysis.blocked_or_reduced_paths?.length ? (
+              <section>
+                <h3 className="text-sm font-semibold text-content-primary">
+                  Blocked or reduced paths
+                </h3>
+                <div className="mt-2 space-y-2">
+                  {analysis.blocked_or_reduced_paths.map((path) => (
+                    <article
+                      key={path.path_id}
+                      className="rounded border border-yellow-700/60 bg-yellow-950/30 p-2"
+                    >
+                      <p className="text-xs font-medium text-yellow-100">
+                        {formatPath(path.nodes)}
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-yellow-100/80">
+                        {path.reason}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {traversal && (
+              <section>
+                <h3 className="text-sm font-semibold text-content-primary">
+                  Traversal evidence
+                </h3>
+                <p className="mt-2 text-xs leading-5 text-content-secondary">
+                  Threshold: {traversal.highlight_threshold}; max highlighted paths:{' '}
+                  {traversal.max_highlighted_paths}. Reachable debug nodes:{' '}
+                  {traversal.reachable_nodes.length}.
+                </p>
+                {traversal.followed_edges.length ? (
+                  <div className="mt-2">
+                    <p className="text-xs font-medium text-content-primary">Followed edges</p>
+                    <ul className="mt-1 space-y-1 text-xs text-content-secondary">
+                      {traversal.followed_edges.slice(0, 8).map((edge) => (
+                        <li key={`${edge.edge_id}-${edge.from}-${edge.to}`} className="rounded bg-grey-900/70 px-2 py-1">
+                          {edge.from_label ?? edge.from}
+                          {' -> '}
+                          {edge.to_label ?? edge.to} ·{' '}
+                          {edge.edge_type} · {edge.direction}: {edge.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {traversal.skipped_edges.length ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-content-primary">Skipped edges</p>
+                    <ul className="mt-1 space-y-1 text-xs text-content-secondary">
+                      {traversal.skipped_edges.slice(0, 8).map((edge) => (
+                        <li key={`${edge.edge_id}-${edge.from}-${edge.to}`} className="rounded bg-grey-900/70 px-2 py-1">
+                          {edge.from_label ?? edge.from}
+                          {' -> '}
+                          {edge.to_label ?? edge.to} ·{' '}
+                          {edge.edge_type} · {edge.direction}: {edge.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {traversal.ranked_but_not_highlighted_paths.length ? (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium text-content-primary">
+                      Ranked but not highlighted
+                    </p>
+                    <ul className="mt-1 space-y-1 text-xs text-content-secondary">
+                      {traversal.ranked_but_not_highlighted_paths.slice(0, 8).map((path) => (
+                        <li key={`${path.nodes.join('-')}-${path.score}`} className="rounded bg-grey-900/70 px-2 py-1">
+                          {formatPath(path.nodes)} · score {path.score}: {path.reason}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+              </section>
+            )}
+
             {highestRiskPath && (
               <section>
                 <h3 className="text-sm font-semibold text-content-primary">
                   Plain-English explanation
                 </h3>
                 <p className="mt-2 rounded border border-grey-600 bg-grey-900/70 p-2 text-xs leading-5 text-content-primary">
-                  {highestRiskPath.nodes.join(' -> ')}
+                  {formatPath(highestRiskPath.nodes)}
                 </p>
                 <p className="mt-2 text-xs leading-5 text-content-secondary">
-                  {highestRiskPath.explanation}
+                  {highestRiskPath.why_this_path_matters}
                 </p>
               </section>
             )}
@@ -476,7 +667,9 @@ export function BreachPathAnalysisPanel() {
                 <div className="mt-2 space-y-2">
                   {analysis.recommendations.map((recommendation) => (
                     <article
-                      key={`${recommendation.title}-${recommendation.type}`}
+                      key={`${recommendation.title}-${recommendation.type}-${formatPath(
+                        recommendation.triggered_by_path
+                      )}`}
                       className="rounded border border-grey-600 bg-grey-900/70 p-3"
                     >
                       <div className="flex items-start justify-between gap-2">
@@ -484,12 +677,39 @@ export function BreachPathAnalysisPanel() {
                           {recommendation.title}
                         </strong>
                         <span className="rounded bg-grey-700 px-2 py-0.5 text-xs text-content-secondary">
-                          {recommendation.priority}
+                          {recommendation.severity ?? recommendation.priority}
                         </span>
                       </div>
                       <p className="mt-2 text-xs leading-5 text-content-secondary">
-                        {recommendation.explanation}
+                        {recommendation.reason ?? recommendation.explanation}
                       </p>
+                      {recommendation.triggered_by_path?.length ? (
+                        <p className="mt-2 rounded bg-grey-800 px-2 py-1 text-xs text-content-primary">
+                          Triggered path: {formatPath(recommendation.triggered_by_path)}
+                        </p>
+                      ) : null}
+                      {recommendation.relevant_edge_types?.length ? (
+                        <p className="mt-2 text-xs text-content-secondary">
+                          Relevant edges: {recommendation.relevant_edge_types.join(', ')}
+                        </p>
+                      ) : null}
+                      {recommendation.what_it_fixes ? (
+                        <p className="mt-2 text-xs leading-5 text-content-secondary">
+                          <strong className="text-content-primary">What it fixes:</strong>{' '}
+                          {recommendation.what_it_fixes}
+                        </p>
+                      ) : null}
+                      {recommendation.expected_effect ? (
+                        <p className="mt-1 text-xs leading-5 text-content-secondary">
+                          <strong className="text-content-primary">Expected effect:</strong>{' '}
+                          {recommendation.expected_effect}
+                        </p>
+                      ) : null}
+                      {recommendation.confidence ? (
+                        <p className="mt-2 text-xs text-content-secondary">
+                          Confidence: {recommendation.confidence}
+                        </p>
+                      ) : null}
                       <p className="mt-2 text-xs text-emerald-200">
                         Estimated risk reduction: {recommendation.estimated_risk_reduction}
                       </p>

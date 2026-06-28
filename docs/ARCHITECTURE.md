@@ -28,6 +28,20 @@ For analysis, the visualizer sends the current graph to FastAPI with `POST /anal
 - `data_leak` for data stores, accounts, NAS, server, database, and cloud/session exposure.
 - `lateral_movement` for privilege, credential, control, and chokepoint movement paths.
 
+The backend uses simulation-specific traversal profiles instead of treating every connection as equally dangerous. Connected means a graph relationship exists; reachable means the selected simulation can logically follow that relationship; affected means the node sits on a ranked exposure path; critical means the node is important because of criticality, type, data sensitivity, privilege, or operational role.
+
+Current-graph analysis now ranks critical paths and returns only the highest-relevance paths for highlighting. Path scores consider target criticality, node type, sensitive data, edge risk, simulation relevance, hop count, credentials/admin/control edges, internet exposure, and firewall or segmentation blockers. The visualizer follows backend-selected `highlighted_nodes`, `highlighted_edges`, `top_paths`, `critical_nodes_reached`, and `blocked_or_reduced_paths`; it does not independently highlight every connected edge.
+
+Firewall and segmentation nodes are treated as defensive controls. If a path crosses a firewall or protected segment without an explicit allowed edge, the backend stops or reduces that path and reports it under `blocked_or_reduced_paths` instead of treating the downstream node as fully exposed.
+
+Recommendations are generated from ranked paths. Each recommendation includes the reason it exists, the triggering path, relevant edge types, affected nodes, what it fixes, expected effect, simulation type, confidence, and defensive action steps where useful. Router/admin or credential recommendations are only produced when the risky path actually includes router management, privileged identity, stored credentials, or control relationships.
+
+Analysis responses also include `traversal_explanation`. This section records followed edges, skipped edges, ranked-but-not-highlighted paths, connected-but-not-highlighted nodes, and all reachable debug nodes/edges. It explains whether an edge was skipped because its type was irrelevant, its direction was wrong for the selected source, the path score was below threshold, the path fell outside the top ranked paths, or a firewall/segmentation control reduced the path.
+
+Edges store explicit direction metadata. `same_network` defaults to `bidirectional`; `can_access`, `routes_through`, `administers`, `controls`, `stores_credentials_for`, `depends_on`, `backs_up`, `monitors`, and `internet_exposes` default to `directional` unless the builder explicitly marks a suitable edge as bidirectional. This prevents a connection such as `File Server --stores_credentials_for--> Admin Account` from being traversed backwards when the source is `Admin Account`.
+
+The analysis panel includes a `Show all reachable nodes` debug toggle. Default behaviour still highlights only ranked critical or meaningful paths. When the toggle is on, reachable-but-low-relevance nodes and edges are shown in muted colours so users can see the difference between data being reachable and data being important enough to highlight.
+
 The BreachPath customisation adds a collapsible network builder drawer, built-in example networks for testing, a right-side `BreachPath Analysis` panel, local graph save/load/export/import using browser `localStorage`, and native TuringDB canvas highlighting for selected suspected nodes, affected nodes, affected exposure-path edges, reachable critical assets, and faded unrelated graph elements.
 
 The built-in example networks are `Basic Home Network`, `Home + IoT Network`, and `Small Office Network`. These are designed for quick demos and regression testing of router, laptop, IoT, storage, VPN, identity, and server exposure paths.

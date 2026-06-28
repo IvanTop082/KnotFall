@@ -7,7 +7,8 @@ import { useEffect, useMemo } from 'react'
 
 const SELECTED_NODE_COLOR = 0xef4444
 const DEFAULT_AFFECTED_NODE_COLOR = 0xf59e0b
-const RELATED_EDGE_COLOR = 0xfbbf24
+const BLOCKED_EDGE_COLOR = 0x94a3b8
+const REACHABLE_DEBUG_COLOR = 0x64748b
 const SEVERITY_COLORS: Record<string, number> = {
   low: 0x60a5fa,
   medium: 0xf59e0b,
@@ -41,6 +42,7 @@ export function BreachPathCanvasHighlighter() {
   const selectedNode = useBreachPathStore((state) => state.selectedNode)
   const analysis = useBreachPathStore((state) => state.analysis)
   const animateExposurePaths = useBreachPathStore((state) => state.animateExposurePaths)
+  const showAllReachable = useBreachPathStore((state) => state.showAllReachable)
   const entityCache = useVisStore((state) => state.entityCache)
   const canvasNodes = useCanvasStore((state) => state.nodes())
   const canvasEdges = useCanvasStore((state) => state.edges())
@@ -51,8 +53,15 @@ export function BreachPathCanvasHighlighter() {
   )
 
   const criticalTargets = useMemo(
-    () => new Set(analysis?.paths.map((path) => path.target) ?? []),
-    [analysis?.paths]
+    () =>
+      new Set(
+        analysis?.critical_nodes_reached?.length
+          ? analysis.critical_nodes_reached
+          : (analysis?.top_paths?.map((path) => path.target_node) ??
+              analysis?.paths.map((path) => path.target) ??
+              [])
+      ),
+    [analysis?.critical_nodes_reached, analysis?.paths, analysis?.top_paths]
   )
 
   const highlightedEdges = useMemo(
@@ -61,8 +70,34 @@ export function BreachPathCanvasHighlighter() {
         analysis?.highlighted_edges
           .flatMap((edge) => [edgeKey(edge.source, edge.target), edgeKey(edge.target, edge.source)])
           .filter((key) => key !== undefined)
-      ),
+    ),
     [analysis?.highlighted_edges]
+  )
+
+  const blockedEdges = useMemo(
+    () =>
+      new Set(
+        analysis?.blocked_or_reduced_paths
+          ?.flatMap((path) => path.edge_refs ?? [])
+          .flatMap((edge) => [edgeKey(edge.source, edge.target), edgeKey(edge.target, edge.source)])
+          .filter((key) => key !== undefined) ?? []
+      ),
+    [analysis?.blocked_or_reduced_paths]
+  )
+
+  const reachableNodes = useMemo(
+    () => new Set(analysis?.traversal_explanation?.reachable_nodes ?? []),
+    [analysis?.traversal_explanation?.reachable_nodes]
+  )
+
+  const reachableEdges = useMemo(
+    () =>
+      new Set(
+        analysis?.traversal_explanation?.reachable_edges
+          ?.flatMap((edge) => [edgeKey(edge.source, edge.target), edgeKey(edge.target, edge.source)])
+          .filter((key) => key !== undefined) ?? []
+      ),
+    [analysis?.traversal_explanation?.reachable_edges]
   )
 
   const edgeSeverity = useMemo(() => {
@@ -90,6 +125,7 @@ export function BreachPathCanvasHighlighter() {
         selectedNode !== undefined &&
         (selectedNode.canvasNodeId === node.id || selectedNode.breachPathNodeId === breachPathId)
       const isHighlighted = breachPathId !== undefined && highlightedNodes.has(breachPathId)
+      const isReachable = breachPathId !== undefined && reachableNodes.has(breachPathId)
       const isCritical = breachPathId !== undefined && criticalTargets.has(breachPathId)
       const severity = breachPathId
         ? analysis?.visual_severity_by_node?.[breachPathId]
@@ -111,6 +147,9 @@ export function BreachPathCanvasHighlighter() {
       } else if (isHighlighted) {
         turing.instance.setNodeColor(node, severityColor ?? DEFAULT_AFFECTED_NODE_COLOR)
         turing.instance.setNodeOpacity(node, 0.95)
+      } else if (analysis && showAllReachable && isReachable) {
+        turing.instance.setNodeColor(node, REACHABLE_DEBUG_COLOR)
+        turing.instance.setNodeOpacity(node, 0.55)
       } else {
         turing.instance.resetNodeColor(node)
         turing.instance.setNodeOpacity(node, analysis ? 0.18 : 0.32)
@@ -122,8 +161,8 @@ export function BreachPathCanvasHighlighter() {
       const targetId = nodeIdByCanvasId.get(edge.target.id)
       const currentEdgeKey = edgeBreachPathKey(edge.data, sourceId, targetId)
       const isHighlighted = currentEdgeKey !== undefined && highlightedEdges.has(currentEdgeKey)
-      const sourceHighlighted = sourceId !== undefined && highlightedNodes.has(sourceId)
-      const targetHighlighted = targetId !== undefined && highlightedNodes.has(targetId)
+      const isBlocked = currentEdgeKey !== undefined && blockedEdges.has(currentEdgeKey)
+      const isReachable = currentEdgeKey !== undefined && reachableEdges.has(currentEdgeKey)
       const severity = currentEdgeKey ? edgeSeverity.get(currentEdgeKey) : undefined
       const severityColor = severity ? SEVERITY_COLORS[severity] : undefined
 
@@ -142,9 +181,13 @@ export function BreachPathCanvasHighlighter() {
           animateExposurePaths,
           SEVERITY_LEVELS[severity ?? 'high'] ?? 3
         )
-      } else if (analysis && sourceHighlighted && targetHighlighted) {
-        turing.instance.setEdgeColor(edge, RELATED_EDGE_COLOR)
-        turing.instance.setEdgeOpacity(edge, 0.65)
+      } else if (isBlocked) {
+        turing.instance.setEdgeColor(edge, BLOCKED_EDGE_COLOR)
+        turing.instance.setEdgeOpacity(edge, 0.45)
+        turing.instance.setEdgeExposureAnimation(edge, false, 0)
+      } else if (analysis && showAllReachable && isReachable) {
+        turing.instance.setEdgeColor(edge, REACHABLE_DEBUG_COLOR)
+        turing.instance.setEdgeOpacity(edge, 0.35)
         turing.instance.setEdgeExposureAnimation(edge, false, 0)
       } else {
         turing.instance.setEdgeColor(edge, undefined)
@@ -155,13 +198,17 @@ export function BreachPathCanvasHighlighter() {
   }, [
     analysis,
     animateExposurePaths,
+    blockedEdges,
     canvasEdges,
     canvasNodes,
     criticalTargets,
     entityCache,
     highlightedEdges,
     highlightedNodes,
+    reachableEdges,
+    reachableNodes,
     selectedNode,
+    showAllReachable,
     turing,
     edgeSeverity,
   ])

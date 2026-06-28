@@ -369,7 +369,7 @@ export const CYBER_EDGE_TEMPLATES: CyberEdgeTemplate[] = [
     default_risk: 'medium',
     risk_weight: 55,
     direction: 'source_to_target',
-    risk_can_spread_both_ways: true,
+    risk_can_spread_both_ways: false,
   },
   {
     edge_type: 'administers',
@@ -414,7 +414,7 @@ export const CYBER_EDGE_TEMPLATES: CyberEdgeTemplate[] = [
     default_risk: 'medium',
     risk_weight: 55,
     direction: 'source_to_target',
-    risk_can_spread_both_ways: true,
+    risk_can_spread_both_ways: false,
   },
   {
     edge_type: 'backs_up',

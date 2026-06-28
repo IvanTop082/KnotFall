@@ -36,6 +36,7 @@ export type BreachPathStore = {
   lastAnalysisGraphVersion: number | undefined
   lastAnalysisSimulationType: BreachPathSimulationType | undefined
   animateExposurePaths: boolean
+  showAllReachable: boolean
   savedNetworkId: string | undefined
   savedNetworkName: string | undefined
   savedNetworkVersion: number | undefined
@@ -47,6 +48,7 @@ export type BreachPathStore = {
   setSimulationType: (simulationType: BreachPathSimulationType) => void
   setCurrentGraphHash: (graphHash: string) => void
   setAnimateExposurePaths: (animate: boolean) => void
+  setShowAllReachable: (show: boolean) => void
   setSavedNetworkVersion: (
     networkId: string,
     version: number | undefined,
@@ -85,6 +87,7 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   lastAnalysisGraphVersion: undefined,
   lastAnalysisSimulationType: undefined,
   animateExposurePaths: true,
+  showAllReachable: false,
   savedNetworkId: undefined,
   savedNetworkName: undefined,
   savedNetworkVersion: undefined,
@@ -94,6 +97,7 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   storageStatusLabel: 'Storage: Local fallback',
   setSimulationType: (simulationType) => set({ simulationType }),
   setAnimateExposurePaths: (animate) => set({ animateExposurePaths: animate }),
+  setShowAllReachable: (show) => set({ showAllReachable: show }),
   setSavedNetworkVersion: (networkId, version, name, graphHash) =>
     set({
       savedNetworkId: networkId,

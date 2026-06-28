@@ -69,6 +69,13 @@ function formatDateTime(value: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+const BIDIRECTIONAL_EDGE_TYPES = new Set(['same_network', 'can_access', 'routes_through'])
+
+function defaultDirectionForEdge(edgeType: string) {
+  const template = getEdgeTemplate(edgeType)
+  return template?.direction === 'bidirectional' ? 'bidirectional' : 'directional'
+}
+
 export function BreachPathBuilderPanel() {
   const turing = useTuringContext()
   const canvasActions = useCanvasStore((state) => state.actions)
@@ -127,6 +134,7 @@ export function BreachPathBuilderPanel() {
   const [sourceCanvasId, setSourceCanvasId] = useState('')
   const [targetCanvasId, setTargetCanvasId] = useState('')
   const [edgeType, setEdgeType] = useState('can_access')
+  const [edgeDirection, setEdgeDirection] = useState(defaultDirectionForEdge('can_access'))
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedTemplate = useMemo(() => getNodeTemplate(templateId), [templateId])
@@ -146,6 +154,10 @@ export function BreachPathBuilderPanel() {
     setNodeHasAdminPrivileges(selectedTemplate.has_admin_privileges)
     setNodeNotes(selectedTemplate.notes)
   }, [selectedTemplate])
+
+  useEffect(() => {
+    setEdgeDirection(defaultDirectionForEdge(edgeType))
+  }, [edgeType])
 
   useEffect(() => {
     if (!selectedNode) return
@@ -249,6 +261,8 @@ export function BreachPathBuilderPanel() {
   const suggestedEdgeTypes = useMemo(() => {
     return suggestEdgeTypes(sourceNode?.graphNode.node_type, targetNode?.graphNode.node_type)
   }, [sourceNode?.graphNode.node_type, targetNode?.graphNode.node_type])
+  const selectedEdgeTemplate = useMemo(() => getEdgeTemplate(edgeType), [edgeType])
+  const canMarkBidirectional = BIDIRECTIONAL_EDGE_TYPES.has(edgeType)
 
   const enterLocalMode = () => {
     setLocalBuilderMode(true)
@@ -365,7 +379,13 @@ export function BreachPathBuilderPanel() {
     enterLocalMode()
 
     const edgeId = nextEdgeId(canvasEdges)
-    const edgeData = createEdgeData(edgeId, source.graphNode, target.graphNode, template)
+    const resolvedDirection =
+      edgeDirection === 'bidirectional' && canMarkBidirectional ? 'bidirectional' : 'directional'
+    const edgeData = {
+      ...createEdgeData(edgeId, source.graphNode, target.graphNode, template),
+      direction: resolvedDirection,
+      risk_can_spread_both_ways: resolvedDirection === 'bidirectional',
+    }
 
     canvasActions.addEdges([
       {
@@ -1379,9 +1399,32 @@ export function BreachPathBuilderPanel() {
               </option>
             ))}
           </select>
+          <div className="mt-2 rounded border border-grey-700 bg-grey-800/60 p-2">
+            <label className="block text-xs text-content-secondary">Direction</label>
+            <select
+              className="app-input mt-1 w-full"
+              value={edgeDirection}
+              disabled={!canMarkBidirectional || edgeType === 'same_network'}
+              onChange={(event) => setEdgeDirection(event.target.value)}
+            >
+              <option value="directional">Directional: source -&gt; target</option>
+              <option value="bidirectional">Bidirectional: source &lt;-&gt; target</option>
+            </select>
+            <p className="mt-2 text-xs leading-5 text-content-secondary">
+              {selectedEdgeTemplate?.meaning}
+              <br />
+              Stored direction:{' '}
+              <strong className="text-content-primary">
+                {edgeDirection === 'bidirectional' ? 'bidirectional' : 'directional'}
+              </strong>
+              . {canMarkBidirectional
+                ? 'Use bidirectional only when both sides can logically traverse the relationship.'
+                : 'This cyber relationship stays directional by default.'}
+            </p>
+          </div>
           <p className="mt-2 text-xs text-content-secondary">
             Every connection requires a typed cyber relationship; blank edges are not created.
-            Lines are shown without arrows, but the relationship type is still used by analysis.
+            Lines are shown without arrows, but relationship type and direction are used by analysis.
           </p>
           <button
             className="app-button mt-2 w-full"

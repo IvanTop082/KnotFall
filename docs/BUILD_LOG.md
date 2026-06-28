@@ -117,3 +117,19 @@ Moved controls out of the giant fixed sidebar pattern and into navbar-driven too
 Added separate closable panels for Network Builder, Analyse, Save / Load, Version History, and Example Networks so the canvas stays the main focus and users no longer need to scroll through one long control wall.
 
 Kept existing builder, analysis, save/load, version history, examples, highlighting, and animated path functionality while making each tool panel internally scrollable and easier to find.
+
+## Bit 13: Recommendation Reasoning and Attack-Type-Specific Highlighting
+
+Replaced broad reachable-node highlighting with simulation-specific traversal rules, ranked critical paths, backend-selected highlighted nodes/edges, and firewall/segmentation blocker handling.
+
+Replaced generic recommendations with path-based recommendations that explain the triggering path, relevant edge types, what the action fixes, expected effect, confidence, and defensive next steps.
+
+Updated the BreachPath Analysis panel to show ranked path reasoning, blocked/reduced paths, and recommendation explanations. Added deterministic backend tests proving phone, router, firewall, data leak, offline, and lateral-movement scenarios do not all highlight the same graph.
+
+## Bit 14: Analysis Transparency and Edge Direction Evidence
+
+Added traversal reasoning to analysis responses, including followed edges, skipped edge reasons, ranked-but-not-highlighted paths, connected-but-not-highlighted nodes, and all reachable debug nodes/edges.
+
+Made edge direction visible in the BreachPath builder and kept only suitable relationships configurable as bidirectional. Added a `Show all reachable nodes` debug toggle so low-relevance reachable nodes can be shown muted without changing the default ranked-path highlighting.
+
+Added evidence tests for the Admin Account and File Server direction case, proving `stores_credentials_for` is not traversed backwards unless a valid `can_access` or equivalent edge is added.

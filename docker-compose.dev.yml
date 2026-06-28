@@ -1,0 +1,27 @@
+services:
+  turingdb:
+    image: turingdbai/turingdb:nightly
+    stdin_open: true
+    tty: true
+    ports:
+      - "16666:6666"
+      - "18080:8080"
+    volumes:
+      - ./external/turingdb-hackathon-defense:/work
+    working_dir: /work
+    command: turingdb start -turing-dir /work -i 0.0.0.0 -p 6666 -ui -ui-port 8080
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      TURINGDB_HOST: http://turingdb:6666
+      TURINGDB_GRAPH_NAME: breachpath_demo
+      BREACHPATH_GRAPH_SOURCE: ${BREACHPATH_GRAPH_SOURCE:-local}
+    depends_on:
+      - turingdb

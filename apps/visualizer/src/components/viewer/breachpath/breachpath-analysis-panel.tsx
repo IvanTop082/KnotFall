@@ -24,10 +24,26 @@ export function BreachPathAnalysisPanel() {
     return [...new Set(analysis.paths.map((path) => path.target))]
   }, [analysis])
 
+  const relationshipTypesFollowed = useMemo(() => {
+    if (!analysis) return []
+    return [
+      ...new Set(
+        analysis.highlighted_edges
+          .map((edge) => edge.relationship)
+          .filter((relationship): relationship is string => Boolean(relationship))
+      ),
+    ]
+  }, [analysis])
+
+  const affectedDeviceIds = useMemo(() => {
+    if (!analysis) return []
+    return analysis.highlighted_nodes.filter((nodeId) => nodeId !== analysis.compromised_node.id)
+  }, [analysis])
+
   const fallbackRecommendations = [
-    'Review whether this device needs access to all connected devices.',
-    'Consider separating guest/IoT devices from personal or work devices.',
-    'Mark important devices as critical to improve risk analysis.',
+    'No high/critical devices were reached, but connected devices may still be exposed.',
+    'Mark important devices as high/critical to improve analysis.',
+    'Consider separating low-trust devices such as printers, smart TVs, and IoT devices.',
   ]
 
   return (
@@ -45,15 +61,19 @@ export function BreachPathAnalysisPanel() {
       <div className="app-scrollbar flex flex-1 flex-col gap-4 overflow-y-auto p-4">
         {!selectedNode && status !== 'error' && (
           <div className="flex flex-1 items-center justify-center text-center text-sm text-content-secondary">
-            Select a node and run compromise analysis.
+            Select a device on the canvas, then run analysis.
           </div>
         )}
 
         {selectedNode && status === 'idle' && (
           <div className="rounded border border-grey-600 bg-grey-900/70 p-3 text-sm text-content-secondary">
-            <p className="font-medium text-content-primary">{selectedNode.label}</p>
+            <p className="font-medium text-content-primary">Selected: {selectedNode.label}</p>
+            {selectedNode.nodeType && (
+              <p className="mt-1 text-xs text-content-secondary">Type: {selectedNode.nodeType}</p>
+            )}
             <p className="mt-1">
-              Use the BreachPath builder panel to run compromise analysis against the current graph.
+              Use Analyse selected or the BreachPath builder panel to run analysis against the
+              current graph.
             </p>
           </div>
         )}
@@ -69,9 +89,15 @@ export function BreachPathAnalysisPanel() {
           <div className="rounded border border-red-700 bg-red-950/30 p-3 text-sm">
             <div className="flex items-center gap-2 text-red-200">
               <Icon icon="error" />
-              <span className="font-medium">Could not analyse this node.</span>
+              <span className="font-medium">
+                {error === 'Select a device on the canvas first.'
+                  ? 'Select a device on the canvas first.'
+                  : 'Analysis failed. Check that the backend is running at http://localhost:8000.'}
+              </span>
             </div>
-            {error && <p className="mt-2 text-xs text-red-100/80">{error}</p>}
+            {error && error !== 'Select a device on the canvas first.' && (
+              <p className="mt-2 text-xs text-red-100/80">{error}</p>
+            )}
           </div>
         )}
 
@@ -128,10 +154,16 @@ export function BreachPathAnalysisPanel() {
             </section>
 
             <section>
-              <h3 className="text-sm font-semibold text-content-primary">Affected devices</h3>
-              {analysis.highlighted_nodes.length ? (
+              <h3 className="text-sm font-semibold text-content-primary">
+                Why these devices are affected
+              </h3>
+              <p className="mt-2 text-xs leading-5 text-content-secondary">
+                BreachPath follows typed relationships from the selected device through the
+                current graph. Devices below are reachable through those defensive exposure paths.
+              </p>
+              {affectedDeviceIds.length ? (
                 <ul className="mt-2 grid grid-cols-1 gap-1 text-sm text-content-secondary">
-                  {analysis.highlighted_nodes.map((nodeId) => (
+                  {affectedDeviceIds.map((nodeId) => (
                     <li key={nodeId} className="rounded bg-grey-900/70 px-2 py-1">
                       {nodeId}
                     </li>
@@ -142,6 +174,33 @@ export function BreachPathAnalysisPanel() {
                   No other connected devices were reached from this node.
                 </p>
               )}
+            </section>
+
+            <section>
+              <h3 className="text-sm font-semibold text-content-primary">
+                What relationship types were followed
+              </h3>
+              {relationshipTypesFollowed.length ? (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {relationshipTypesFollowed.map((relationship) => (
+                    <span
+                      key={relationship}
+                      className="rounded border border-grey-600 bg-grey-900/70 px-2 py-1 text-xs text-content-secondary"
+                    >
+                      {relationship}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-content-secondary">
+                  No typed relationships were followed from this device.
+                </p>
+              )}
+              <p className="mt-2 text-xs leading-5 text-content-secondary">
+                Home-style relationships such as same_network, can_access, and routes_through
+                can spread risk both ways. Admin, credential, control, backup, monitoring, and
+                dependency relationships remain directional.
+              </p>
             </section>
 
             <section>
@@ -213,9 +272,7 @@ export function BreachPathAnalysisPanel() {
             )}
 
             <section>
-              <h3 className="text-sm font-semibold text-content-primary">
-                Recommended defensive actions
-              </h3>
+              <h3 className="text-sm font-semibold text-content-primary">Recommendations</h3>
               {analysis.recommendations.length ? (
                 <div className="mt-2 space-y-2">
                   {analysis.recommendations.map((recommendation) => (

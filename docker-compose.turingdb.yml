@@ -1,0 +1,12 @@
+services:
+  turingdb:
+    image: turingdbai/turingdb:nightly
+    stdin_open: true
+    tty: true
+    ports:
+      - "16666:6666"
+      - "18080:8080"
+    volumes:
+      - ./external/turingdb-hackathon-defense:/work
+    working_dir: /work
+    command: turingdb start -turing-dir /work -i 0.0.0.0 -p 6666 -ui -ui-port 8080

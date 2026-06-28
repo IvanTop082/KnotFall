@@ -47,7 +47,7 @@ export function BreachPathCanvasHighlighter() {
     () =>
       new Set(
         analysis?.highlighted_edges
-          .map((edge) => edgeKey(edge.source, edge.target))
+          .flatMap((edge) => [edgeKey(edge.source, edge.target), edgeKey(edge.target, edge.source)])
           .filter((key) => key !== undefined)
       ),
     [analysis?.highlighted_edges]

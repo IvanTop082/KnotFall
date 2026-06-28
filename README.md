@@ -1,33 +1,27 @@
-<<<<<<< HEAD
-# KnotFall
-=======
 # BreachPath
 
-BreachPath is a cyber defence graph tool that helps analysts understand what an attacker can reach from a compromised machine.
+BreachPath is a defensive graph-analysis demo for understanding exposure paths from a suspected compromised node to critical systems.
 
-## Current Status
+## Current Architecture
 
-Bit 1: project scaffold
+- `apps/api`: FastAPI BreachPath brain for graph loading, exposure-path analysis, risk scoring, and recommendations.
+- `apps/visualizer`: official product UI, based on the real TuringDB visualizer source and customised for BreachPath.
+- `apps/visualizer_prototype`: archived interim React prototype, kept only as reference.
+- `apps/web`: original Next.js UI, kept as backup/reference.
+- `data`: local JSON demo graph and improvement data.
+- `docker-compose.dev.yml`: TuringDB plus the FastAPI backend for local integration.
 
-## Planned Build Stages
+## Main Local URLs
 
-- Bit 1: Project scaffold
-- Bit 2: Demo cyber network data
-- Bit 3: Attack path backend
-- Bit 4: Visual graph frontend
-- Bit 5: Risk scoring
-- Bit 6: Recommendations and improvement reasoning
-- Bit 7: Before/after response simulation
-- Bit 8: TuringDB integration
+- Modified BreachPath visualizer: `http://localhost:3001`
+- FastAPI backend: `http://localhost:8000`
+- TuringDB API: `http://localhost:16666`
+- Stock TuringDB visualizer for reference/debug: `http://localhost:18080`
 
-## Planned Stack
+## Start
 
-- Frontend: Next.js / React
-- Backend: Python FastAPI
-- Graph database later: TuringDB
-- Visual graph later: React Flow or similar
+Use the current runbook:
 
-## MVP Note
-
-The first MVP will use local JSON demo data before connecting to TuringDB.
->>>>>>> c495e94 (Starting)
+```powershell
+scripts/start_real_turingdb_visualizer_breachpath.md
+```

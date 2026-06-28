@@ -32,7 +32,8 @@ export type BreachPathStore = {
     node: NodeEntry | undefined,
     canvasNodeId: number,
     graph?: BreachPathGraphPayload
-  ) => Promise<void>
+  ) => Promise<boolean>
+  runAnalysisForSelectedNode: (graph?: BreachPathGraphPayload) => Promise<boolean>
   clearAnalysis: () => void
 }
 
@@ -73,10 +74,18 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   },
   runAnalysisForNode: async (node, canvasNodeId, graph) => {
     get().selectNodeForAnalysis(node, canvasNodeId)
+    return get().runAnalysisForSelectedNode(graph)
+  },
+  runAnalysisForSelectedNode: async (graph) => {
     const selectedNode = get().selectedNode
 
     if (!selectedNode) {
-      return
+      set({
+        analysis: undefined,
+        status: 'error',
+        error: 'Select a device on the canvas first.',
+      })
+      return false
     }
 
     set({
@@ -93,10 +102,10 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
       const currentSelectedNode = get().selectedNode
 
       if (
-        currentSelectedNode?.canvasNodeId !== canvasNodeId ||
+        currentSelectedNode?.canvasNodeId !== selectedNode.canvasNodeId ||
         currentSelectedNode.breachPathNodeId !== selectedNode.breachPathNodeId
       ) {
-        return
+        return false
       }
 
       set({
@@ -104,13 +113,14 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
         status: 'ready',
         error: undefined,
       })
+      return true
     } catch (error) {
       const currentSelectedNode = get().selectedNode
       if (
-        currentSelectedNode?.canvasNodeId !== canvasNodeId ||
+        currentSelectedNode?.canvasNodeId !== selectedNode.canvasNodeId ||
         currentSelectedNode.breachPathNodeId !== selectedNode.breachPathNodeId
       ) {
-        return
+        return false
       }
 
       set({
@@ -118,6 +128,7 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
         status: 'error',
         error: error instanceof Error ? error.message : 'Could not analyse this node.',
       })
+      return false
     }
   },
   clearAnalysis: () =>

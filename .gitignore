@@ -11,3 +11,4 @@ build/
 .cache/
 coverage/
 *.log
+external/

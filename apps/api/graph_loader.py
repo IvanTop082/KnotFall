@@ -3,6 +3,11 @@ from pathlib import Path
 from typing import Any
 
 from .config import DEMO_NETWORK_PATH
+from .config import (
+    BREACHPATH_GRAPH_SOURCE,
+    TURINGDB_GRAPH_NAME,
+    TURINGDB_HOST,
+)
 
 
 REQUIRED_NODE_FIELDS = {
@@ -26,6 +31,26 @@ REQUIRED_EDGE_FIELDS = {
 
 class GraphDataError(ValueError):
     pass
+
+
+def load_configured_graph() -> dict[str, Any]:
+    if BREACHPATH_GRAPH_SOURCE == "local":
+        return load_demo_network()
+
+    if BREACHPATH_GRAPH_SOURCE == "turingdb":
+        from .turingdb_integration.graph_repository import TuringDBGraphRepository
+
+        repository = TuringDBGraphRepository(
+            host=TURINGDB_HOST,
+            graph_name=TURINGDB_GRAPH_NAME,
+        )
+        graph = repository.load_graph()
+        validate_graph_data(graph)
+        return graph
+
+    raise GraphDataError(
+        "Invalid BREACHPATH_GRAPH_SOURCE. Use 'local' or 'turingdb'."
+    )
 
 
 def load_demo_network(path: Path = DEMO_NETWORK_PATH) -> dict[str, Any]:

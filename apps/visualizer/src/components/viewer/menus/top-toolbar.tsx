@@ -1,5 +1,6 @@
 import TuringButton from '@/components/base/turing-button'
-import { useBreachPathBuilderStore, useVisStore } from '@/stores'
+import { buildGraphPayload } from '@/breachpath/graph-utils'
+import { useBreachPathBuilderStore, useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { CenterForceSwitch } from './actions/center-force-switch'
 import { NodeShapeSwitch } from './actions/node-shape-switch'
 
@@ -9,8 +10,15 @@ export const TuringTopToolBar = () => {
   const nodeInspectorExtendedWidth = useVisStore((state) => state.nodeInspectorExtendedWidth)
   const nodeInspectorCollapsedWidth = useVisStore((state) => state.nodeInspectorCollapsedWidth)
   const graphLoading = useVisStore((state) => state.graphLoading)
+  const canvasNodes = useCanvasStore((state) => state.nodes())
+  const canvasEdges = useCanvasStore((state) => state.edges())
   const builderDrawerOpen = useBreachPathBuilderStore((state) => state.builderDrawerOpen)
   const setBuilderDrawerOpen = useBreachPathBuilderStore((state) => state.setBuilderDrawerOpen)
+  const selectedNode = useBreachPathStore((state) => state.selectedNode)
+  const analysisStatus = useBreachPathStore((state) => state.status)
+  const runAnalysisForSelectedNode = useBreachPathStore(
+    (state) => state.runAnalysisForSelectedNode
+  )
 
   const inspectorOffset = inspectNodeInfo
     ? isNodeInspectorExtended
@@ -32,6 +40,16 @@ export const TuringTopToolBar = () => {
           onClick={() => setBuilderDrawerOpen(!builderDrawerOpen)}
         >
           Network builder
+        </TuringButton>
+
+        <TuringButton
+          icon="path-search"
+          intent="success"
+          disabled={!selectedNode || analysisStatus === 'loading'}
+          loading={analysisStatus === 'loading'}
+          onClick={() => runAnalysisForSelectedNode(buildGraphPayload(canvasNodes, canvasEdges))}
+        >
+          Analyse selected
         </TuringButton>
 
         <div className="mx-1 h-6 border-l border-grey-600" />

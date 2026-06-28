@@ -2,11 +2,14 @@ import type { NodeEntry } from '@/api/models/nodeEntry.model'
 import {
   CYBER_EDGE_TEMPLATES,
   CYBER_NODE_TEMPLATES,
+  getCriticalityHelp,
   getEdgeTemplate,
+  getImpactExplanation,
   getNodeTemplate,
   suggestEdgeTypes,
   type Criticality,
 } from '@/breachpath/cyber-templates'
+import { EXAMPLE_NETWORKS } from '@/breachpath/example-networks'
 import {
   buildGraphPayload,
   createEdgeData,
@@ -41,11 +44,14 @@ export function BreachPathBuilderPanel() {
   const canvasActions = useCanvasStore((state) => state.actions)
   const canvasNodes = useCanvasStore((state) => state.nodes())
   const canvasEdges = useCanvasStore((state) => state.edges())
-  const selectedNodes = useCanvasStore((state) => state.selectedNodes())
   const entityCache = useVisStore((state) => state.entityCache)
   const neighbourhood = useVisStore((state) => state.neighbourhood)
   const graphName = useAppStore((state) => state.graphName)
-  const runAnalysisForNode = useBreachPathStore((state) => state.runAnalysisForNode)
+  const selectedNode = useBreachPathStore((state) => state.selectedNode)
+  const analysisStatus = useBreachPathStore((state) => state.status)
+  const runAnalysisForSelectedNode = useBreachPathStore(
+    (state) => state.runAnalysisForSelectedNode
+  )
   const clearAnalysis = useBreachPathStore((state) => state.clearAnalysis)
   const builderDrawerOpen = useBreachPathBuilderStore((state) => state.builderDrawerOpen)
   const setBuilderDrawerOpen = useBreachPathBuilderStore((state) => state.setBuilderDrawerOpen)
@@ -63,12 +69,19 @@ export function BreachPathBuilderPanel() {
   const [nodeInternetExposed, setNodeInternetExposed] = useState(false)
   const [nodeHasAdminPrivileges, setNodeHasAdminPrivileges] = useState(false)
   const [nodeNotes, setNodeNotes] = useState('')
+  const [exampleNetworkId, setExampleNetworkId] = useState('basic-home-network')
   const [sourceCanvasId, setSourceCanvasId] = useState('')
   const [targetCanvasId, setTargetCanvasId] = useState('')
   const [edgeType, setEdgeType] = useState('can_access')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const selectedTemplate = useMemo(() => getNodeTemplate(templateId), [templateId])
+  const selectedExampleNetwork = useMemo(
+    () => EXAMPLE_NETWORKS.find((example) => example.id === exampleNetworkId),
+    [exampleNetworkId]
+  )
+  const criticalityHelp = useMemo(() => getCriticalityHelp(templateId), [templateId])
+  const impactExplanation = useMemo(() => getImpactExplanation(templateId), [templateId])
 
   useEffect(() => {
     if (!selectedTemplate) return
@@ -88,11 +101,6 @@ export function BreachPathBuilderPanel() {
       })),
     [canvasNodes]
   )
-
-  const selectedNode = useMemo(() => {
-    const firstSelected = [...selectedNodes.values()][0]
-    return firstSelected
-  }, [selectedNodes])
 
   const sourceNode = useMemo(
     () => graphNodes.find((node) => String(node.canvasId) === sourceCanvasId),
@@ -187,12 +195,18 @@ export function BreachPathBuilderPanel() {
 
   const runSelectedAnalysis = async () => {
     if (!selectedNode) {
-      setStatusMessage('Select a node on the canvas before running analysis.')
+      setStatusMessage('Select a device on the canvas first.')
+      await runAnalysisForSelectedNode(currentGraph())
       return
     }
 
-    const graph = currentGraph()
-    await runAnalysisForNode(selectedNode.data as NodeEntry | undefined, selectedNode.id, graph)
+    setStatusMessage(`Running analysis for ${selectedNode.label}.`)
+    const didRun = await runAnalysisForSelectedNode(currentGraph())
+    setStatusMessage(
+      didRun
+        ? `Analysis complete for ${selectedNode.label}.`
+        : 'Analysis failed. Check that the backend is running at http://localhost:8000.'
+    )
   }
 
   const loadGraph = (graph: BreachPathGraphPayload) => {
@@ -227,6 +241,13 @@ export function BreachPathBuilderPanel() {
     setStatusMessage('Loaded local BreachPath network.')
   }
 
+  const loadExampleNetwork = () => {
+    if (!selectedExampleNetwork) return
+
+    loadGraph(selectedExampleNetwork.graph)
+    setStatusMessage(`Loaded example network: ${selectedExampleNetwork.title}.`)
+  }
+
   const saveLocally = () => {
     saveGraphToLocalStorage(currentGraph())
     setStatusMessage('Saved this network in browser localStorage.')
@@ -252,8 +273,8 @@ export function BreachPathBuilderPanel() {
   if (!builderDrawerOpen) return null
 
   return (
-    <aside className="shadow-dark pointer-events-auto absolute bottom-4 left-4 top-20 z-10 w-[410px] overflow-hidden rounded border border-grey-600 bg-grey-800">
-      <header className="border-b border-grey-600 px-4 py-3">
+    <aside className="shadow-dark pointer-events-auto absolute bottom-4 left-4 top-20 z-10 flex max-h-[calc(100vh-6rem)] w-[410px] flex-col overflow-hidden rounded border border-grey-600 bg-grey-800">
+      <header className="shrink-0 border-b border-grey-600 px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-content-primary">
@@ -275,7 +296,7 @@ export function BreachPathBuilderPanel() {
         </div>
       </header>
 
-      <div className="app-scrollbar max-h-[calc(100vh-9rem)] space-y-4 overflow-y-auto p-4 text-sm">
+      <div className="app-scrollbar min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4 pb-12 text-sm">
         <section>
           <div className="grid grid-cols-2 gap-2">
             <button className="app-button" type="button" onClick={newNetwork}>
@@ -309,6 +330,32 @@ export function BreachPathBuilderPanel() {
             onClick={() => fileInputRef.current?.click()}
           >
             Import JSON
+          </button>
+        </section>
+
+        <section className="rounded border border-cyan-700/70 bg-cyan-950/20 p-3">
+          <h3 className="font-semibold text-content-primary">Load example network</h3>
+          <p className="mt-1 text-xs text-content-secondary">
+            Start with a built-in test network, then analyse a router, laptop, or server.
+          </p>
+          <select
+            className="app-input mt-2 w-full"
+            value={exampleNetworkId}
+            onChange={(event) => setExampleNetworkId(event.target.value)}
+          >
+            {EXAMPLE_NETWORKS.map((example) => (
+              <option key={example.id} value={example.id}>
+                {example.title}
+              </option>
+            ))}
+          </select>
+          {selectedExampleNetwork && (
+            <p className="mt-2 text-xs leading-5 text-content-secondary">
+              {selectedExampleNetwork.description}
+            </p>
+          )}
+          <button className="app-button mt-2 w-full" type="button" onClick={loadExampleNetwork}>
+            Load example network
           </button>
         </section>
 
@@ -352,6 +399,11 @@ export function BreachPathBuilderPanel() {
               ))}
             </select>
 
+            <div className="mt-3 rounded border border-cyan-700/60 bg-cyan-950/30 p-2 text-xs leading-5 text-cyan-100">
+              <p className="font-medium text-cyan-50">Impact explanation</p>
+              <p>{impactExplanation}</p>
+            </div>
+
             <label className="mt-3 block text-xs text-content-secondary">Label</label>
             <input
               className="app-input mt-1 w-full"
@@ -391,6 +443,11 @@ export function BreachPathBuilderPanel() {
                 </select>
               </label>
             </div>
+
+            <p className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-xs leading-5 text-yellow-100">
+              Recommended default: <strong>{selectedTemplate?.criticality ?? 'medium'}</strong>.{' '}
+              {criticalityHelp}
+            </p>
 
             <label className="mt-3 flex items-center gap-2 text-xs text-content-secondary">
               <input
@@ -498,8 +555,23 @@ export function BreachPathBuilderPanel() {
             Select a suspected compromised node on the canvas, then run analysis against the
             current graph.
           </p>
-          <button className="app-button mt-2 w-full" type="button" onClick={runSelectedAnalysis}>
-            Analyse selected node
+          {selectedNode ? (
+            <p className="mt-2 rounded border border-emerald-700/60 bg-emerald-950/30 p-2 text-xs text-emerald-100">
+              Selected: {selectedNode.label}
+              {selectedNode.nodeType && ` (${selectedNode.nodeType})`}
+            </p>
+          ) : (
+            <p className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-xs text-yellow-100">
+              Select a device on the canvas first.
+            </p>
+          )}
+          <button
+            className="app-button mt-2 w-full"
+            type="button"
+            disabled={analysisStatus === 'loading'}
+            onClick={runSelectedAnalysis}
+          >
+            {analysisStatus === 'loading' ? 'Analysing...' : 'Analyse selected node'}
           </button>
         </section>
 

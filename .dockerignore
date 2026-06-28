@@ -1,0 +1,11 @@
+.git/
+.next/
+apps/web/.next/
+apps/web/node_modules/
+node_modules/
+external/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.log

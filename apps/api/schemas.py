@@ -81,5 +81,63 @@ class RecommendationResponse(BaseModel):
     results: list[RecommendationResult]
 
 
+class AnalysisCompromisedNode(BaseModel):
+    id: str
+    label: str
+    type: str
+
+
+class AnalysisSummary(BaseModel):
+    affected_node_count: int
+    affected_edge_count: int
+    critical_assets_reachable: int
+    highest_risk_score: int
+    risk_level: str
+
+
+class AnalysisEdgeRef(BaseModel):
+    source: str
+    target: str
+    relationship: str | None = None
+
+
+class AnalysisPath(BaseModel):
+    target: str
+    risk_score: int
+    risk_level: str
+    nodes: list[str]
+    edges: list[AnalysisEdgeRef]
+    explanation: str
+
+
+class AnalysisRecommendation(BaseModel):
+    title: str
+    type: str
+    priority: str
+    estimated_risk_reduction: int
+    explanation: str
+
+
+class CompromisedNodeAnalysisResponse(BaseModel):
+    compromised_node: AnalysisCompromisedNode
+    summary: AnalysisSummary
+    highlighted_nodes: list[str]
+    highlighted_edges: list[AnalysisEdgeRef]
+    paths: list[AnalysisPath]
+    recommendations: list[AnalysisRecommendation]
+    defensive_note: str
+
+
+class AnalysisGraphPayload(BaseModel):
+    metadata: dict[str, Any] = {}
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]]
+
+
+class CompromisedNodeAnalysisRequest(BaseModel):
+    node_id: str
+    graph: AnalysisGraphPayload
+
+
 class ErrorResponse(BaseModel):
     detail: str

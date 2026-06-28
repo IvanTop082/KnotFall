@@ -1,6 +1,7 @@
 export type BreachPathAnalysisEdgeRef = {
   source: string
   target: string
+  relationship?: string | null
 }
 
 export type BreachPathAnalysisPath = {

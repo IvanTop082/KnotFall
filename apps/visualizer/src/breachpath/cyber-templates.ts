@@ -40,7 +40,7 @@ export const CYBER_NODE_TEMPLATES: CyberNodeTemplate[] = [
   },
   {
     id: 'laptop',
-    title: 'Laptop',
+    title: 'Personal Laptop',
     icon: '💻',
     group: 'Home / small network',
     node_type: 'laptop',
@@ -84,7 +84,7 @@ export const CYBER_NODE_TEMPLATES: CyberNodeTemplate[] = [
     group: 'Home / small network',
     node_type: 'tablet',
     template_type: 'workstation',
-    criticality: 'low',
+    criticality: 'medium',
     zone: 'home',
     is_internet_exposed: false,
     has_admin_privileges: false,
@@ -214,7 +214,7 @@ export const CYBER_NODE_TEMPLATES: CyberNodeTemplate[] = [
     group: 'Home / small network',
     node_type: 'internet',
     template_type: 'network_device',
-    criticality: 'high',
+    criticality: 'critical',
     zone: 'dmz',
     is_internet_exposed: true,
     has_admin_privileges: false,
@@ -253,7 +253,7 @@ export const CYBER_NODE_TEMPLATES: CyberNodeTemplate[] = [
     group: 'Business / company network',
     node_type: 'database',
     template_type: 'database',
-    criticality: 'critical',
+    criticality: 'high',
     zone: 'critical',
     is_internet_exposed: false,
     has_admin_privileges: false,
@@ -444,6 +444,68 @@ export const CYBER_EDGE_TEMPLATES: CyberEdgeTemplate[] = [
     risk_can_spread_both_ways: false,
   },
 ]
+
+const CRITICALITY_HELP: Record<string, string> = {
+  router: 'Routers are usually high impact because many devices depend on them for network access.',
+  internet: 'Internet exposure is treated as critical because it represents the outside boundary of the network.',
+  'admin-account': 'Admin accounts are critical because they can manage or unlock other devices.',
+  'domain-controller': 'Domain controllers are critical because they control identity and access for the network.',
+  'critical-service': 'Critical services are marked critical because disruption would matter to operations.',
+  'operations-server': 'Operations servers are critical because they support important business or mission workflows.',
+  database: 'Databases are usually high impact because they can hold sensitive or operational data.',
+  'nas-home-server': 'NAS and home servers are high impact because they often store files, backups, or shared credentials.',
+  'work-laptop': 'Work laptops are high impact when they connect to company systems or store work credentials.',
+  'vpn-gateway': 'VPN gateways are high impact because they provide remote access into the network.',
+  firewall: 'Firewalls are high impact because they shape what can enter or leave the network.',
+  'backup-server': 'Backup servers are high impact because they protect recovery data and can expose many files.',
+  'security-camera': 'Security cameras are medium impact: they may expose privacy or help an attacker understand the site.',
+  laptop: 'Personal laptops are medium impact by default because they often contain accounts, files, and browser sessions.',
+  phone: 'Phones are medium impact because they may hold accounts, messages, and two-factor prompts.',
+  tablet: 'Tablets are medium impact because they often share accounts with phones or laptops.',
+  printer: 'Printers are lower impact by default, but can still expose documents or provide a foothold.',
+  'smart-tv': 'Smart TVs are lower impact by default, but should usually stay away from trusted devices.',
+  'iot-device': 'IoT devices are lower impact by default, but are often weaker and should be isolated.',
+  'game-console': 'Game consoles are lower impact by default and usually do not need access to sensitive devices.',
+  'guest-device': 'Guest devices are lower impact but lower trust, so they should stay separated from important devices.',
+}
+
+const IMPACT_EXPLANATIONS: Record<string, string> = {
+  router: 'Central network device. If compromised, many connected devices may be exposed.',
+  internet: 'External boundary. Anything directly connected here may be exposed to outside traffic.',
+  printer: 'Usually lower impact, but can still expose documents or provide a foothold.',
+  'nas-home-server': 'Often stores files/backups, so compromise can expose sensitive data.',
+  'admin-account': 'High impact because it can manage other devices.',
+  'work-laptop': 'High impact if it connects to company systems or stores work credentials.',
+  'domain-controller': 'Identity control point. Compromise can affect many accounts and devices.',
+  database: 'Stores important data, so compromise can expose or disrupt business information.',
+  'vpn-gateway': 'Remote access entry point. Compromise can expose internal systems.',
+  firewall: 'Controls network boundaries. Compromise can weaken protection across the network.',
+  'backup-server': 'Stores recovery data. Compromise can affect recovery and expose copied files.',
+  'security-camera': 'May expose privacy-sensitive video and can be a weak device on the network.',
+  phone: 'Personal device that may hold accounts, messages, and authentication prompts.',
+  tablet: 'Portable device that may share accounts or access with phones and laptops.',
+  laptop: 'Everyday endpoint. It can expose personal files, browser sessions, and local network access.',
+  'smart-tv': 'Entertainment device that usually does not need access to sensitive systems.',
+  'iot-device': 'IoT device that should usually be isolated from trusted laptops and servers.',
+  'game-console': 'Entertainment device that normally only needs internet access.',
+  'guest-device': 'Unmanaged visitor device. Keep it away from personal, work, and storage devices.',
+  'critical-service': 'Important service. Compromise or outage would matter to operations.',
+  'operations-server': 'Operations system. Compromise can affect mission or production workflows.',
+}
+
+export function getCriticalityHelp(templateId: string) {
+  return (
+    CRITICALITY_HELP[templateId] ??
+    'This default is a starting point. You can override it if this device matters more or less in your network.'
+  )
+}
+
+export function getImpactExplanation(templateId: string) {
+  return (
+    IMPACT_EXPLANATIONS[templateId] ??
+    'This template gives BreachPath a starting point for defensive exposure analysis.'
+  )
+}
 
 export function getEdgeTemplate(edgeType: string) {
   return CYBER_EDGE_TEMPLATES.find((template) => template.edge_type === edgeType)

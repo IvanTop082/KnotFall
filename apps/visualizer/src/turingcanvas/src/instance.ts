@@ -162,6 +162,11 @@ export class TuringInstance {
     e.opacity = opacity
   }
 
+  setEdgeExposureAnimation(e: TuringEdge, enabled: boolean, severity = 1) {
+    e.exposureAnimated = enabled
+    e.exposureSeverity = severity
+  }
+
   setNodeOpacity(n: TuringNode, opacity: number) {
     n.opacity = opacity
     this.renderer.updateNodeUniforms(n)

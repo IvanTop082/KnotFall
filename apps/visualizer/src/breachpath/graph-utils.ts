@@ -45,7 +45,40 @@ export type SavedBreachPathGraph = {
   graph: BreachPathGraphPayload
 }
 
+export type BreachPathNetworkVersion = {
+  version: number
+  commit_id: string
+  message: string
+  created_at: string
+  graph_hash: string
+  node_count: number
+  edge_count: number
+  graph: BreachPathGraphPayload
+  analysed?: boolean
+  analysis_count?: number
+}
+
+export type BreachPathLocalNetwork = {
+  network_id: string
+  name: string
+  latest_version: number
+  updated_at: string
+  versions: BreachPathNetworkVersion[]
+}
+
+export type BreachPathLocalNetworkSummary = {
+  network_id: string
+  name: string
+  latest_version: number
+  updated_at: string
+  node_count: number
+  edge_count: number
+}
+
 export const LOCAL_GRAPH_STORAGE_KEY = 'breachpath.localGraph.v1'
+export const LOCAL_NETWORK_INDEX_KEY = 'breachpath.networks.index'
+export const LOCAL_NETWORK_KEY_PREFIX = 'breachpath.networks.'
+export const LOCAL_CURRENT_NETWORK_ID_KEY = 'breachpath.currentNetworkId'
 
 const PROPERTY_KEYS = {
   id: ['id', 'id (String)', 'breachpath_id', 'breachpath_id (String)'],
@@ -65,6 +98,44 @@ function slugify(value: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '')
+}
+
+function commitId(networkId: string, version: number, graphHash: string, message: string) {
+  const payload = `${networkId}:${version}:${graphHash}:${message}:${Date.now()}`
+  let hash = 0
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = (hash * 33 + payload.charCodeAt(index)) >>> 0
+  }
+
+  return hash.toString(16).padStart(8, '0')
+}
+
+export function networkIdFromName(name: string) {
+  return slugify(name) || `network-${Date.now()}`
+}
+
+function networkStorageKey(networkId: string) {
+  return `${LOCAL_NETWORK_KEY_PREFIX}${networkId}`
+}
+
+function readNetworkIndex() {
+  const raw = localStorage.getItem(LOCAL_NETWORK_INDEX_KEY)
+  if (!raw) return [] as string[]
+
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function writeNetworkIndex(networkIds: string[]) {
+  localStorage.setItem(
+    LOCAL_NETWORK_INDEX_KEY,
+    JSON.stringify([...new Set(networkIds)].sort(), null, 2)
+  )
 }
 
 function propertyValue(entry: NodeEntry | undefined, keys: string[], fallback = '') {
@@ -242,6 +313,181 @@ export function loadGraphFromLocalStorage() {
   const raw = localStorage.getItem(LOCAL_GRAPH_STORAGE_KEY)
   if (!raw) return undefined
   return JSON.parse(raw) as SavedBreachPathGraph
+}
+
+export function listLocalNetworks(): BreachPathLocalNetworkSummary[] {
+  return readNetworkIndex()
+    .map((networkId) => loadLocalNetwork(networkId))
+    .filter((network): network is BreachPathLocalNetwork => Boolean(network))
+    .map((network) => {
+      const latest = getLatestLocalNetworkVersion(network)
+      return {
+        network_id: network.network_id,
+        name: network.name,
+        latest_version: network.latest_version,
+        updated_at: network.updated_at,
+        node_count: latest?.node_count ?? 0,
+        edge_count: latest?.edge_count ?? 0,
+      }
+    })
+    .sort((first, second) => second.updated_at.localeCompare(first.updated_at))
+}
+
+export function loadLocalNetwork(networkId: string) {
+  const raw = localStorage.getItem(networkStorageKey(networkId))
+  if (!raw) return undefined
+
+  try {
+    return JSON.parse(raw) as BreachPathLocalNetwork
+  } catch {
+    return undefined
+  }
+}
+
+export function getLatestLocalNetworkVersion(network: BreachPathLocalNetwork) {
+  return [...network.versions].sort((first, second) => second.version - first.version)[0]
+}
+
+export function getLocalNetworkVersion(networkId: string, version: number) {
+  return loadLocalNetwork(networkId)?.versions.find((entry) => entry.version === version)
+}
+
+export function saveLocalNetworkVersion(args: {
+  networkId: string
+  name: string
+  graph: BreachPathGraphPayload
+  message: string
+}) {
+  const networkId = args.networkId || networkIdFromName(args.name)
+  const existing = loadLocalNetwork(networkId)
+  const version = (existing?.latest_version ?? 0) + 1
+  const createdAt = new Date().toISOString()
+  const graph_hash = graphFingerprint(args.graph)
+  const entry: BreachPathNetworkVersion = {
+    version,
+    commit_id: commitId(networkId, version, graph_hash, args.message),
+    message: args.message || `Saved version ${version}`,
+    created_at: createdAt,
+    graph_hash,
+    node_count: args.graph.nodes.length,
+    edge_count: args.graph.edges.length,
+    graph: args.graph,
+    analysed: false,
+    analysis_count: 0,
+  }
+  const network: BreachPathLocalNetwork = {
+    network_id: networkId,
+    name: args.name || existing?.name || networkId,
+    latest_version: version,
+    updated_at: createdAt,
+    versions: [...(existing?.versions ?? []), entry],
+  }
+  const index = readNetworkIndex()
+
+  localStorage.setItem(networkStorageKey(networkId), JSON.stringify(network, null, 2))
+  writeNetworkIndex([...index, networkId])
+  localStorage.setItem(LOCAL_CURRENT_NETWORK_ID_KEY, networkId)
+
+  return { network, version: entry }
+}
+
+export function renameLocalNetwork(networkId: string, name: string) {
+  const network = loadLocalNetwork(networkId)
+  if (!network) throw new Error(`Saved network not found: ${networkId}`)
+
+  const updated = {
+    ...network,
+    name,
+    updated_at: new Date().toISOString(),
+  }
+  localStorage.setItem(networkStorageKey(networkId), JSON.stringify(updated, null, 2))
+  return updated
+}
+
+export function deleteLocalNetwork(networkId: string) {
+  localStorage.removeItem(networkStorageKey(networkId))
+  writeNetworkIndex(readNetworkIndex().filter((savedNetworkId) => savedNetworkId !== networkId))
+
+  if (localStorage.getItem(LOCAL_CURRENT_NETWORK_ID_KEY) === networkId) {
+    localStorage.removeItem(LOCAL_CURRENT_NETWORK_ID_KEY)
+  }
+}
+
+export function restoreLocalNetworkVersion(networkId: string, version: number) {
+  const network = loadLocalNetwork(networkId)
+  const snapshot = network?.versions.find((entry) => entry.version === version)
+  if (!network || !snapshot) throw new Error(`Version ${version} not found.`)
+
+  return saveLocalNetworkVersion({
+    networkId,
+    name: network.name,
+    graph: snapshot.graph,
+    message: `Restored from v${version}`,
+  })
+}
+
+export function compareGraphs(
+  fromGraph: BreachPathGraphPayload,
+  toGraph: BreachPathGraphPayload
+) {
+  const fromNodes = new Map(fromGraph.nodes.map((node) => [node.id, node]))
+  const toNodes = new Map(toGraph.nodes.map((node) => [node.id, node]))
+  const fromEdges = new Map(fromGraph.edges.map((edge) => [edge.id, edge]))
+  const toEdges = new Map(toGraph.edges.map((edge) => [edge.id, edge]))
+  const added_nodes = [...toNodes.keys()]
+    .filter((nodeId) => !fromNodes.has(nodeId))
+    .map((nodeId) => toNodes.get(nodeId)!)
+  const removed_nodes = [...fromNodes.keys()]
+    .filter((nodeId) => !toNodes.has(nodeId))
+    .map((nodeId) => fromNodes.get(nodeId)!)
+  const changed_nodes = [...fromNodes.keys()]
+    .filter((nodeId) => {
+      const before = fromNodes.get(nodeId)
+      const after = toNodes.get(nodeId)
+      return before && after && before.criticality !== after.criticality
+    })
+    .map((nodeId) => ({
+      id: nodeId,
+      label: toNodes.get(nodeId)?.label ?? fromNodes.get(nodeId)?.label ?? nodeId,
+      before_criticality: fromNodes.get(nodeId)?.criticality,
+      after_criticality: toNodes.get(nodeId)?.criticality,
+    }))
+  const added_edges = [...toEdges.keys()]
+    .filter((edgeId) => !fromEdges.has(edgeId))
+    .map((edgeId) => toEdges.get(edgeId)!)
+  const removed_edges = [...fromEdges.keys()]
+    .filter((edgeId) => !toEdges.has(edgeId))
+    .map((edgeId) => fromEdges.get(edgeId)!)
+  const changed_edges = [...fromEdges.keys()]
+    .filter((edgeId) => {
+      const before = fromEdges.get(edgeId)
+      const after = toEdges.get(edgeId)
+      return before && after && before.edge_type !== after.edge_type
+    })
+    .map((edgeId) => ({
+      id: edgeId,
+      source: toEdges.get(edgeId)?.source ?? fromEdges.get(edgeId)?.source,
+      target: toEdges.get(edgeId)?.target ?? fromEdges.get(edgeId)?.target,
+      before_relationship: fromEdges.get(edgeId)?.edge_type,
+      after_relationship: toEdges.get(edgeId)?.edge_type,
+    }))
+
+  return {
+    added_nodes,
+    removed_nodes,
+    changed_nodes,
+    added_edges,
+    removed_edges,
+    changed_edges,
+    summary: {
+      added_nodes: added_nodes.length,
+      removed_nodes: removed_nodes.length,
+      changed_nodes: changed_nodes.length,
+      added_edges: added_edges.length,
+      removed_edges: removed_edges.length,
+      changed_edges: changed_edges.length,
+    },
+  }
 }
 
 export function downloadGraph(graph: BreachPathGraphPayload) {

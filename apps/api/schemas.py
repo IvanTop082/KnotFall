@@ -123,6 +123,10 @@ class AnalysisRecommendation(BaseModel):
 
 class CompromisedNodeAnalysisResponse(BaseModel):
     compromised_node: AnalysisCompromisedNode
+    network_id: str | None = None
+    version: int | None = None
+    graph_hash: str | None = None
+    analysed_at: str | None = None
     simulation_type: SimulationType = "compromise"
     summary: AnalysisSummary
     risk_score: int = 0
@@ -147,6 +151,9 @@ class AnalysisGraphPayload(BaseModel):
 class CompromisedNodeAnalysisRequest(BaseModel):
     node_id: str
     simulation_type: SimulationType = "compromise"
+    network_id: str | None = None
+    version: int | None = None
+    graph_hash: str | None = None
     graph: AnalysisGraphPayload
 
 
@@ -161,11 +168,22 @@ class NetworkSaveRequest(BaseModel):
     message: str = "Saved network"
 
 
+class NetworkSaveVersionRequest(BaseModel):
+    network_id: str
+    graph: AnalysisGraphPayload
+    message: str = "Saved network version"
+    name: str | None = None
+
+
 class NetworkSaveResponse(BaseModel):
     network_id: str
-    name: str
+    name: str | None = None
     commit_id: str
     version: int
+    message: str | None = None
+    created_at: str | None = None
+    node_count: int | None = None
+    edge_count: int | None = None
     status: str
     storage_backend: str = "local_history_fallback"
     warning: str | None = None
@@ -188,6 +206,8 @@ class NetworkCommitSummary(BaseModel):
     created_at: str
     node_count: int
     edge_count: int
+    analysed: bool = False
+    analysis_count: int = 0
 
 
 class SavedNetworkResponse(BaseModel):
@@ -198,3 +218,38 @@ class SavedNetworkResponse(BaseModel):
     commit_id: str
     updated_at: str
     storage_backend: str = "local_history_fallback"
+
+
+class SavedNetworkVersionResponse(BaseModel):
+    network_id: str
+    name: str
+    graph: dict[str, Any]
+    version: int
+    commit_id: str
+    message: str
+    created_at: str
+    node_count: int
+    edge_count: int
+    analysed: bool = False
+    analysis_count: int = 0
+    storage_backend: str = "local_history_fallback"
+
+
+class NetworkCompareResponse(BaseModel):
+    network_id: str
+    from_version: int
+    to_version: int
+    added_nodes: list[dict[str, Any]]
+    removed_nodes: list[dict[str, Any]]
+    changed_nodes: list[dict[str, Any]]
+    added_edges: list[dict[str, Any]]
+    removed_edges: list[dict[str, Any]]
+    changed_edges: list[dict[str, Any]]
+    summary: dict[str, int]
+
+
+class NetworkStorageStatusResponse(BaseModel):
+    status: str
+    storage_backend: str
+    turingdb_host: str
+    message: str

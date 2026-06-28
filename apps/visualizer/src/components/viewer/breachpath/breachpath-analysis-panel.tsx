@@ -1,6 +1,6 @@
-import { getBreachPathApiBaseUrl } from '@/api/breachpath'
+import { getBreachPathApiBaseUrl, type BreachPathSimulationType } from '@/api/breachpath'
 import { buildGraphPayload, graphFingerprint } from '@/breachpath/graph-utils'
-import { useBreachPathStore, useCanvasStore } from '@/stores'
+import { useBreachPathBuilderStore, useBreachPathStore, useCanvasStore } from '@/stores'
 import { Icon, Spinner } from '@blueprintjs/core'
 import { useMemo } from 'react'
 
@@ -18,8 +18,23 @@ export function BreachPathAnalysisPanel() {
   const lastAnalysisGraphHash = useBreachPathStore((state) => state.lastAnalysisGraphHash)
   const currentGraphVersion = useBreachPathStore((state) => state.currentGraphVersion)
   const lastAnalysisGraphVersion = useBreachPathStore((state) => state.lastAnalysisGraphVersion)
+  const savedNetworkId = useBreachPathStore((state) => state.savedNetworkId)
+  const savedNetworkName = useBreachPathStore((state) => state.savedNetworkName)
+  const savedNetworkVersion = useBreachPathStore((state) => state.savedNetworkVersion)
+  const hasUnsavedChanges = useBreachPathStore((state) => state.hasUnsavedChanges)
+  const previewVersion = useBreachPathStore((state) => state.previewVersion)
+  const simulationType = useBreachPathStore((state) => state.simulationType)
+  const setSimulationType = useBreachPathStore((state) => state.setSimulationType)
+  const builderDrawerOpen = useBreachPathBuilderStore((state) => state.builderDrawerOpen)
+  const activePanel = useBreachPathBuilderStore((state) => state.activePanel)
+  const setBuilderDrawerOpen = useBreachPathBuilderStore((state) => state.setBuilderDrawerOpen)
+  const setActivePanel = useBreachPathBuilderStore((state) => state.setActivePanel)
   const lastAnalysisSimulationType = useBreachPathStore(
     (state) => state.lastAnalysisSimulationType
+  )
+  const animateExposurePaths = useBreachPathStore((state) => state.animateExposurePaths)
+  const setAnimateExposurePaths = useBreachPathStore(
+    (state) => state.setAnimateExposurePaths
   )
   const runAnalysisForSelectedNode = useBreachPathStore(
     (state) => state.runAnalysisForSelectedNode
@@ -40,11 +55,24 @@ export function BreachPathAnalysisPanel() {
   )
   const currentGraphFingerprint = useMemo(() => graphFingerprint(currentGraph), [currentGraph])
 
+  const runSelectedAnalysis = () => {
+    runAnalysisForSelectedNode(currentGraph, currentGraphFingerprint, simulationType, {
+      networkId: savedNetworkId,
+      version: previewVersion ?? savedNetworkVersion,
+      graphHash: currentGraphFingerprint,
+    })
+  }
+
   const rerunAnalysis = () => {
     runAnalysisForSelectedNode(
       currentGraph,
       currentGraphFingerprint,
-      lastAnalysisSimulationType ?? analysis?.simulation_type
+      lastAnalysisSimulationType ?? analysis?.simulation_type,
+      {
+        networkId: savedNetworkId,
+        version: previewVersion ?? savedNetworkVersion,
+        graphHash: currentGraphFingerprint,
+      }
     )
   }
 
@@ -80,12 +108,29 @@ export function BreachPathAnalysisPanel() {
     'Consider separating low-trust devices such as printers, smart TVs, and IoT devices.',
   ]
 
+  if (!builderDrawerOpen || activePanel !== 'analysis') return null
+
   return (
-    <aside className="shadow-dark pointer-events-auto absolute top-0 right-0 z-10 flex h-full w-[360px] flex-col overflow-hidden border-l border-grey-600 bg-grey-800">
-      <header className="border-b border-grey-600 px-4 py-3">
-        <div className="flex items-center gap-2 text-content-primary">
-          <Icon icon="path-search" />
-          <h2 className="text-sm font-semibold">BreachPath Analysis</h2>
+    <aside className="shadow-dark pointer-events-auto absolute right-4 top-20 z-20 flex max-h-[calc(100vh-7rem)] w-[390px] flex-col overflow-hidden rounded border border-grey-600 bg-grey-800/95 backdrop-blur">
+      <header className="shrink-0 border-b border-grey-600 px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-content-primary">
+              <Icon icon="path-search" />
+              <h2 className="text-sm font-semibold">Analyse Exposure</h2>
+            </div>
+            <p className="mt-1 text-xs text-content-secondary">
+              Selected-node defensive analysis and risk recommendations.
+            </p>
+          </div>
+          <button
+            className="rounded px-2 py-1 text-content-secondary hover:bg-grey-700 hover:text-content-primary"
+            type="button"
+            aria-label="Close analysis panel"
+            onClick={() => setBuilderDrawerOpen(false)}
+          >
+            ×
+          </button>
         </div>
         <p className="mt-1 text-xs text-content-secondary">
           FastAPI brain: {getBreachPathApiBaseUrl()}
@@ -94,9 +139,37 @@ export function BreachPathAnalysisPanel() {
 
       <div className="app-scrollbar flex flex-1 flex-col gap-4 overflow-y-auto p-4">
         <section className="rounded border border-grey-600 bg-grey-900/70 p-3 text-xs text-content-secondary">
+          <label className="block text-xs text-content-secondary">Simulation type</label>
+          <select
+            className="app-input mt-1 w-full"
+            value={simulationType}
+            onChange={(event) => setSimulationType(event.target.value as BreachPathSimulationType)}
+          >
+            <option value="compromise">Compromise</option>
+            <option value="offline">Offline / destroyed</option>
+            <option value="spyware">Spyware</option>
+            <option value="data_leak">Data leak</option>
+            <option value="lateral_movement">Lateral movement</option>
+          </select>
+          <button
+            className="app-button mt-2 w-full"
+            type="button"
+            disabled={status === 'loading'}
+            onClick={runSelectedAnalysis}
+          >
+            {status === 'loading' ? 'Analysing...' : 'Analyse selected node'}
+          </button>
+          {!selectedNode && (
+            <p className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-yellow-100">
+              Select a device on the canvas first.
+            </p>
+          )}
+        </section>
+
+        <section className="rounded border border-grey-600 bg-grey-900/70 p-3 text-xs text-content-secondary">
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <p>Current version</p>
+              <p>Local version</p>
               <strong className="text-content-primary">v{currentGraphVersion}</strong>
             </div>
             <div>
@@ -106,6 +179,21 @@ export function BreachPathAnalysisPanel() {
               </strong>
             </div>
           </div>
+          <p className="mt-2 text-xs">
+            Network:{' '}
+            <strong className="text-content-primary">
+              {savedNetworkName ?? analysis?.network_id ?? 'Unsaved network'}
+            </strong>
+            <br />
+            Saved version:{' '}
+            <strong className="text-content-primary">
+              {previewVersion
+                ? `preview v${previewVersion}`
+                : savedNetworkVersion
+                  ? `v${savedNetworkVersion}`
+                  : 'Not saved'}
+            </strong>
+          </p>
           <p
             className={`mt-2 rounded px-2 py-1 ${
               lastAnalysisGraphHash === undefined
@@ -119,12 +207,38 @@ export function BreachPathAnalysisPanel() {
           </p>
           {isAnalysisOutdated && (
             <div className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-yellow-100">
-              <p>Network changed. Previous exposure analysis may be outdated. Re-run analysis.</p>
-              <button className="app-button mt-2 w-full" type="button" onClick={rerunAnalysis}>
-                Re-run analysis
-              </button>
+              <p>
+                {lastAnalysisGraphVersion
+                  ? `This analysis was run on v${lastAnalysisGraphVersion}, but the current graph has unsaved changes.`
+                  : 'Network changed. Previous exposure analysis may be outdated.'}
+              </p>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  className="app-button"
+                  type="button"
+                  onClick={() => setActivePanel('save')}
+                >
+                  Save new version
+                </button>
+                <button className="app-button" type="button" onClick={rerunAnalysis}>
+                  Re-run analysis
+                </button>
+              </div>
             </div>
           )}
+          {hasUnsavedChanges && !isAnalysisOutdated && (
+            <p className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-yellow-100">
+              Unsaved changes are present. Save a new version when this graph state matters.
+            </p>
+          )}
+          <label className="mt-3 flex items-center gap-2 text-xs text-content-secondary">
+            <input
+              type="checkbox"
+              checked={animateExposurePaths}
+              onChange={(event) => setAnimateExposurePaths(event.target.checked)}
+            />
+            Animate exposure paths
+          </label>
         </section>
 
         {!selectedNode && status !== 'error' && (
@@ -181,7 +295,21 @@ export function BreachPathAnalysisPanel() {
                 {analysis.compromised_node.type && ` - ${analysis.compromised_node.type}`}
               </p>
               <p className="mt-2 rounded border border-violet-700/60 bg-violet-950/30 p-2 text-xs text-violet-100">
+                Analysed network: {savedNetworkName ?? analysis.network_id ?? 'Unsaved network'}
+                <br />
                 Simulation: {analysis.simulation_type.replace(/_/g, ' ')}
+                {analysis.version && (
+                  <>
+                    <br />
+                    Analysed version: v{analysis.version}
+                  </>
+                )}
+                {analysis.analysed_at && (
+                  <>
+                    <br />
+                    Analysed at: {new Date(analysis.analysed_at).toLocaleString()}
+                  </>
+                )}
               </p>
               {selectedNode.mappingNote && (
                 <p className="mt-2 rounded border border-yellow-700/70 bg-yellow-950/30 p-2 text-xs text-yellow-100">

@@ -3,7 +3,7 @@ import type { BreachPathGraphEdge } from '@/breachpath/graph-utils'
 import { useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { getBreachPathNodeId } from '@/utils/breachpath-node-id'
 import { useTuringContext } from '@turingcanvas'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 
 const SELECTED_NODE_COLOR = 0xef4444
 const DEFAULT_AFFECTED_NODE_COLOR = 0xf59e0b
@@ -13,6 +13,13 @@ const SEVERITY_COLORS: Record<string, number> = {
   medium: 0xf59e0b,
   high: 0xf97316,
   critical: 0xc084fc,
+}
+
+const SEVERITY_LEVELS: Record<string, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  critical: 4,
 }
 
 function edgeKey(source: string | undefined, target: string | undefined) {
@@ -33,20 +40,10 @@ export function BreachPathCanvasHighlighter() {
   const turing = useTuringContext()
   const selectedNode = useBreachPathStore((state) => state.selectedNode)
   const analysis = useBreachPathStore((state) => state.analysis)
+  const animateExposurePaths = useBreachPathStore((state) => state.animateExposurePaths)
   const entityCache = useVisStore((state) => state.entityCache)
   const canvasNodes = useCanvasStore((state) => state.nodes())
   const canvasEdges = useCanvasStore((state) => state.edges())
-  const [pulseOn, setPulseOn] = useState(false)
-
-  useEffect(() => {
-    if (!analysis) {
-      setPulseOn(false)
-      return
-    }
-
-    const interval = window.setInterval(() => setPulseOn((value) => !value), 650)
-    return () => window.clearInterval(interval)
-  }, [analysis])
 
   const highlightedNodes = useMemo(
     () => new Set(analysis?.highlighted_nodes ?? []),
@@ -133,29 +130,37 @@ export function BreachPathCanvasHighlighter() {
       if (!selectedNode) {
         turing.instance.setEdgeColor(edge, undefined)
         turing.instance.setEdgeOpacity(edge, 0.75)
+        turing.instance.setEdgeExposureAnimation(edge, false, 0)
         continue
       }
 
       if (isHighlighted) {
         turing.instance.setEdgeColor(edge, severityColor ?? SEVERITY_COLORS.high)
-        turing.instance.setEdgeOpacity(edge, pulseOn ? 1 : 0.45)
+        turing.instance.setEdgeOpacity(edge, 1)
+        turing.instance.setEdgeExposureAnimation(
+          edge,
+          animateExposurePaths,
+          SEVERITY_LEVELS[severity ?? 'high'] ?? 3
+        )
       } else if (analysis && sourceHighlighted && targetHighlighted) {
         turing.instance.setEdgeColor(edge, RELATED_EDGE_COLOR)
         turing.instance.setEdgeOpacity(edge, 0.65)
+        turing.instance.setEdgeExposureAnimation(edge, false, 0)
       } else {
         turing.instance.setEdgeColor(edge, undefined)
         turing.instance.setEdgeOpacity(edge, analysis ? 0.08 : 0.2)
+        turing.instance.setEdgeExposureAnimation(edge, false, 0)
       }
     }
   }, [
     analysis,
+    animateExposurePaths,
     canvasEdges,
     canvasNodes,
     criticalTargets,
     entityCache,
     highlightedEdges,
     highlightedNodes,
-    pulseOn,
     selectedNode,
     turing,
     edgeSeverity,

@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -17,19 +19,23 @@ from .graph_loader import (
 )
 from .path_finder import LocalJSONPathFinder
 from .recommendations import LocalRecommendationEngine
-from .repositories.network_repository import get_network_repository
+from .repositories.network_repository import get_network_repository, graph_hash
 from .schemas import (
     AttackPathResponse,
     CompromisedNodeAnalysisRequest,
     CompromisedNodeAnalysisResponse,
     ErrorResponse,
+    GraphResponse,
     NetworkCommitSummary,
+    NetworkCompareResponse,
     NetworkSaveRequest,
     NetworkSaveResponse,
+    NetworkSaveVersionRequest,
+    NetworkStorageStatusResponse,
     NetworkSummary,
-    GraphResponse,
     RecommendationResponse,
     SavedNetworkResponse,
+    SavedNetworkVersionResponse,
 )
 
 
@@ -175,6 +181,18 @@ def get_turingdb_status():
     return response
 
 
+@app.get("/storage/status")
+def get_storage_status():
+    repository = get_network_repository(TURINGDB_HOST)
+    status = repository.storage_status()
+    connected = status.get("status") == "connected"
+    return {
+        "mode": "turingdb" if connected else "local_fallback",
+        "connected": connected,
+        "message": "TuringDB connected" if connected else status.get("message", "Storage: Local fallback"),
+    }
+
+
 @app.get("/graph", response_model=GraphResponse)
 def get_graph():
     graph = _load_graph_or_error()
@@ -201,16 +219,70 @@ def save_network(request: NetworkSaveRequest):
         "name": result.name,
         "commit_id": result.commit_id,
         "version": result.version,
+        "message": result.message,
+        "created_at": result.created_at,
+        "node_count": result.node_count,
+        "edge_count": result.edge_count,
         "status": result.status,
         "storage_backend": result.storage_backend,
         "warning": result.warning,
     }
 
 
+@app.post("/networks", response_model=NetworkSaveResponse)
+def create_or_save_network(request: NetworkSaveVersionRequest):
+    return save_network_version(request)
+
+
+@app.post("/networks/save-version", response_model=NetworkSaveResponse)
+def save_network_version(request: NetworkSaveVersionRequest):
+    repository = get_network_repository(TURINGDB_HOST)
+    result = repository.save_network(
+        network_id=request.network_id,
+        name=request.name,
+        graph=request.graph.dict(),
+        message=request.message,
+    )
+
+    return {
+        "network_id": result.network_id,
+        "name": result.name,
+        "commit_id": result.commit_id,
+        "version": result.version,
+        "message": result.message,
+        "created_at": result.created_at,
+        "node_count": result.node_count,
+        "edge_count": result.edge_count,
+        "status": result.status,
+        "storage_backend": result.storage_backend,
+        "warning": result.warning,
+    }
+
+
+@app.get("/networks/storage-status", response_model=NetworkStorageStatusResponse)
+def get_network_storage_status():
+    repository = get_network_repository(TURINGDB_HOST)
+    return repository.storage_status()
+
+
 @app.get("/networks", response_model=list[NetworkSummary])
 def list_saved_networks():
     repository = get_network_repository(TURINGDB_HOST)
     return repository.list_networks()
+
+
+@app.delete("/networks/{network_id}")
+def delete_saved_network(network_id: str):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        repository.delete_network(network_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return {
+        "network_id": network_id,
+        "status": "deleted",
+    }
 
 
 @app.get("/networks/{network_id}", response_model=SavedNetworkResponse)
@@ -227,6 +299,75 @@ def get_saved_network_history(network_id: str):
     repository = get_network_repository(TURINGDB_HOST)
     try:
         return repository.get_history(network_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/networks/{network_id}/versions", response_model=list[NetworkCommitSummary])
+def get_saved_network_versions(network_id: str):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        return repository.get_history(network_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/networks/{network_id}/versions", response_model=NetworkSaveResponse)
+def save_saved_network_version(network_id: str, request: NetworkSaveVersionRequest):
+    return save_network_version(
+        NetworkSaveVersionRequest(
+            network_id=network_id,
+            name=request.name,
+            graph=request.graph,
+            message=request.message,
+        )
+    )
+
+
+@app.get(
+    "/networks/{network_id}/versions/{version}",
+    response_model=SavedNetworkVersionResponse,
+)
+def get_saved_network_version(network_id: str, version: int):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        return repository.get_version(network_id, version)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.post("/networks/{network_id}/restore/{version}", response_model=NetworkSaveResponse)
+def restore_saved_network_version(network_id: str, version: int):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        result = repository.restore_version(network_id, version)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return {
+        "network_id": result.network_id,
+        "name": result.name,
+        "commit_id": result.commit_id,
+        "version": result.version,
+        "message": result.message,
+        "created_at": result.created_at,
+        "node_count": result.node_count,
+        "edge_count": result.edge_count,
+        "status": result.status,
+        "storage_backend": result.storage_backend,
+        "warning": result.warning,
+    }
+
+
+@app.get("/networks/{network_id}/compare", response_model=NetworkCompareResponse)
+def compare_saved_network_versions(
+    network_id: str,
+    from_version: int = Query(..., ge=1),
+    to_version: int = Query(..., ge=1),
+):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        return repository.compare_versions(network_id, from_version, to_version)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -374,8 +515,10 @@ def analyse_compromised_node_from_graph(
         compromised_node_id=request.node_id,
         simulation_type=simulation_type,
     )
+    analysed_at = datetime.now(UTC).isoformat()
+    resolved_graph_hash = request.graph_hash or graph_hash(request.graph.dict())
 
-    return _build_compromised_node_analysis(
+    analysis = _build_compromised_node_analysis(
         graph=graph,
         compromised_node_id=request.node_id,
         paths=paths,
@@ -383,7 +526,19 @@ def analyse_compromised_node_from_graph(
         simulation_type=simulation_type,
         highlighted_nodes=reachable["nodes"],
         highlighted_edges=reachable["edges"],
+        network_id=request.network_id,
+        version=request.version,
+        graph_hash=resolved_graph_hash,
+        analysed_at=analysed_at,
     )
+
+    _record_version_analysis(
+        network_id=request.network_id,
+        version=request.version,
+        analysis=analysis,
+    )
+
+    return analysis
 
 
 def _load_graph_or_error():
@@ -414,6 +569,31 @@ def _load_analysis_recommendations(
         return []
 
 
+def _record_version_analysis(network_id, version, analysis):
+    if not network_id or not version:
+        return
+
+    try:
+        repository = get_network_repository(TURINGDB_HOST)
+        repository.record_analysis(
+            network_id=network_id,
+            version=int(version),
+            analysis={
+                "analysed_at": analysis.get("analysed_at"),
+                "graph_hash": analysis.get("graph_hash"),
+                "node_id": analysis["compromised_node"]["id"],
+                "simulation_type": analysis.get("simulation_type"),
+                "risk_score": analysis.get("risk_score", 0),
+                "risk_level": analysis.get("risk_level", "none"),
+                "highlighted_nodes": analysis.get("highlighted_nodes", []),
+                "highlighted_edges": analysis.get("highlighted_edges", []),
+                "recommendations": analysis.get("recommendations", []),
+            },
+        )
+    except Exception:
+        return
+
+
 def _build_compromised_node_analysis(
     graph,
     compromised_node_id,
@@ -422,6 +602,10 @@ def _build_compromised_node_analysis(
     simulation_type="compromise",
     highlighted_nodes=None,
     highlighted_edges=None,
+    network_id=None,
+    version=None,
+    graph_hash=None,
+    analysed_at=None,
 ):
     compromised_node = graph["node_lookup"][compromised_node_id]
     highlighted_nodes = list(highlighted_nodes or [])
@@ -488,6 +672,10 @@ def _build_compromised_node_analysis(
             "label": compromised_node["label"],
             "type": compromised_node["type"],
         },
+        "network_id": network_id,
+        "version": version,
+        "graph_hash": graph_hash,
+        "analysed_at": analysed_at,
         "simulation_type": simulation_type,
         "summary": {
             "affected_node_count": len(highlighted_nodes),

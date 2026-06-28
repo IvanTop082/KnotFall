@@ -83,7 +83,7 @@ In the `Save to backend / TuringDB` section:
 1. Set `Network ID`, for example `home_network`.
 2. Set `Network name`, for example `My Home Network`.
 3. Set a commit message, for example `Initial network`.
-4. Click `Save network`.
+4. Click `Save version`.
 
 The backend returns a version and commit id. If TuringDB writing is unavailable, the network is still saved to the local history fallback under `data/saved_networks/`, which is ignored by Git.
 
@@ -97,9 +97,29 @@ Useful API checks:
 ```powershell
 curl.exe http://localhost:8000/networks
 curl.exe http://localhost:8000/networks/home_network/history
+curl.exe http://localhost:8000/networks/home_network/versions
 ```
 
-## 6. Run compromise simulation
+## 6. Use version history
+
+In the same builder section:
+
+1. Click `Version history`.
+2. Use `View` to preview an older version without overwriting the latest graph.
+3. Use `Analyse` to run the selected-node analysis against that version.
+4. Use `Compare` to compare that version with the latest saved version.
+5. Use `Restore` to create a new latest version from an old graph snapshot.
+
+Restore does not delete history. It creates a new version with a message like `Restored from version 1`.
+
+Useful API checks:
+
+```powershell
+curl.exe "http://localhost:8000/networks/home_network/compare?from_version=1&to_version=2"
+curl.exe http://localhost:8000/networks/storage-status
+```
+
+## 7. Run compromise simulation
 
 1. Click the Laptop node on the canvas.
 2. In `Compromise analysis`, choose `Compromise`.
@@ -109,7 +129,9 @@ curl.exe http://localhost:8000/networks/home_network/history
    - risky path to Admin Account appears
    - recommendations mention segmentation and privileged credential review/rotation
 
-## 7. Try other simulation types
+Successful analysis records the analysed saved version when the network has been saved.
+
+## 8. Try other simulation types
 
 Use the simulation dropdown:
 
@@ -121,7 +143,7 @@ Use the simulation dropdown:
 
 Each simulation follows different defensive relationship types and returns different recommendations.
 
-## 8. See outdated-analysis warning
+## 9. See outdated-analysis warning
 
 1. Run an analysis.
 2. Add a new node or edge.
@@ -133,7 +155,7 @@ Network changed. Previous exposure analysis may be outdated. Re-run analysis.
 
 Click `Re-run analysis` to analyse the same selected node again.
 
-## 9. Local fallback persistence
+## 10. Local fallback persistence
 
 The builder still supports browser `localStorage` for:
 

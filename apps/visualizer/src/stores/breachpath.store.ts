@@ -1,6 +1,7 @@
 import type { NodeEntry } from '@/api/models/nodeEntry.model'
 import {
   getCompromisedNodeAnalysis,
+  type BreachPathAnalysisMetadata,
   type BreachPathCompromisedNodeAnalysis,
   type BreachPathGraphPayload,
   type BreachPathSimulationType,
@@ -34,20 +35,40 @@ export type BreachPathStore = {
   currentGraphVersion: number
   lastAnalysisGraphVersion: number | undefined
   lastAnalysisSimulationType: BreachPathSimulationType | undefined
+  animateExposurePaths: boolean
+  savedNetworkId: string | undefined
+  savedNetworkName: string | undefined
+  savedNetworkVersion: number | undefined
+  lastSavedGraphHash: string | undefined
+  hasUnsavedChanges: boolean
+  previewVersion: number | undefined
+  storageStatusLabel: string
   selectNodeForAnalysis: (node: NodeEntry | undefined, canvasNodeId: number) => void
   setSimulationType: (simulationType: BreachPathSimulationType) => void
   setCurrentGraphHash: (graphHash: string) => void
+  setAnimateExposurePaths: (animate: boolean) => void
+  setSavedNetworkVersion: (
+    networkId: string,
+    version: number | undefined,
+    name?: string,
+    graphHash?: string
+  ) => void
+  setNetworkName: (name: string) => void
+  setPreviewVersion: (version: number | undefined) => void
+  setStorageStatusLabel: (label: string) => void
   runAnalysisForNode: (
     node: NodeEntry | undefined,
     canvasNodeId: number,
     graph?: BreachPathGraphPayload,
     graphHash?: string,
-    simulationType?: BreachPathSimulationType
+    simulationType?: BreachPathSimulationType,
+    metadata?: BreachPathAnalysisMetadata
   ) => Promise<boolean>
   runAnalysisForSelectedNode: (
     graph?: BreachPathGraphPayload,
     graphHash?: string,
-    simulationType?: BreachPathSimulationType
+    simulationType?: BreachPathSimulationType,
+    metadata?: BreachPathAnalysisMetadata
   ) => Promise<boolean>
   clearAnalysis: () => void
 }
@@ -63,7 +84,28 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   currentGraphVersion: 0,
   lastAnalysisGraphVersion: undefined,
   lastAnalysisSimulationType: undefined,
+  animateExposurePaths: true,
+  savedNetworkId: undefined,
+  savedNetworkName: undefined,
+  savedNetworkVersion: undefined,
+  lastSavedGraphHash: undefined,
+  hasUnsavedChanges: false,
+  previewVersion: undefined,
+  storageStatusLabel: 'Storage: Local fallback',
   setSimulationType: (simulationType) => set({ simulationType }),
+  setAnimateExposurePaths: (animate) => set({ animateExposurePaths: animate }),
+  setSavedNetworkVersion: (networkId, version, name, graphHash) =>
+    set({
+      savedNetworkId: networkId,
+      savedNetworkName: name,
+      savedNetworkVersion: version,
+      lastSavedGraphHash: graphHash,
+      hasUnsavedChanges: false,
+      previewVersion: undefined,
+    }),
+  setNetworkName: (name) => set({ savedNetworkName: name }),
+  setPreviewVersion: (version) => set({ previewVersion: version }),
+  setStorageStatusLabel: (label) => set({ storageStatusLabel: label }),
   setCurrentGraphHash: (graphHash) =>
     set((state) => {
       if (state.currentGraphHash === graphHash) return state
@@ -71,6 +113,8 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
       return {
         currentGraphHash: graphHash,
         currentGraphVersion: state.currentGraphVersion + 1,
+        hasUnsavedChanges:
+          state.lastSavedGraphHash !== undefined && state.lastSavedGraphHash !== graphHash,
       }
     }),
   selectNodeForAnalysis: (node, canvasNodeId) => {
@@ -103,13 +147,18 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
       error: undefined,
     })
   },
-  runAnalysisForNode: async (node, canvasNodeId, graph, graphHash, simulationType) => {
+  runAnalysisForNode: async (node, canvasNodeId, graph, graphHash, simulationType, metadata) => {
     get().selectNodeForAnalysis(node, canvasNodeId)
-    return get().runAnalysisForSelectedNode(graph, graphHash, simulationType)
+    return get().runAnalysisForSelectedNode(graph, graphHash, simulationType, metadata)
   },
-  runAnalysisForSelectedNode: async (graph, graphHash, simulationType) => {
+  runAnalysisForSelectedNode: async (graph, graphHash, simulationType, metadata) => {
     const selectedNode = get().selectedNode
     const selectedSimulationType = simulationType ?? get().simulationType
+    const analysisMetadata = metadata ?? {
+      networkId: get().savedNetworkId,
+      version: get().previewVersion ?? get().savedNetworkVersion,
+      graphHash: graphHash ?? get().currentGraphHash,
+    }
 
     if (!selectedNode) {
       set({
@@ -133,7 +182,8 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
         ? await postCompromisedNodeAnalysis(
             selectedNode.breachPathNodeId,
             graph,
-            selectedSimulationType
+            selectedSimulationType,
+            analysisMetadata
           )
         : await getCompromisedNodeAnalysis(selectedNode.breachPathNodeId)
       const currentSelectedNode = get().selectedNode
@@ -150,7 +200,8 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
         status: 'ready',
         error: undefined,
         lastAnalysisGraphHash: graphHash ?? get().currentGraphHash,
-        lastAnalysisGraphVersion: get().currentGraphVersion,
+        lastAnalysisGraphVersion:
+          analysis.version ?? analysisMetadata.version ?? get().currentGraphVersion,
         lastAnalysisSimulationType: selectedSimulationType,
       })
       return true

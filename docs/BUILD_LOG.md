@@ -89,3 +89,31 @@ Added graph fingerprint tracking in the visualizer so previous analysis is marke
 Added `simulation_type` to current-graph analysis for compromise, offline/destroyed, spyware, data leak, and lateral movement scenarios.
 
 Added visual severity colour coding for affected nodes/edges and pulsing highlighted exposure paths in the real TuringDB canvas.
+
+Added animated dotted/dashed exposure path visualisation after analysis. Severity now affects highlighted path styling, with stronger animated lines for higher-risk paths and faded styling for unrelated edges.
+
+## Bit 10: Network version history and analysis audit trail
+
+Added GitHub-like network version history for user-created BreachPath graphs, including manual `Save version`, version history, read-only version preview, restore-as-new-version, and compare-version support.
+
+Added backend endpoints for saving versions, listing versions, loading a specific version, restoring a previous version, comparing two versions, and reporting storage status. Analysis results now include `network_id`, `version`, `graph_hash`, `simulation_type`, and `analysed_at`, and saved versions are marked as analysed after a successful simulation.
+
+The visualizer now shows storage status, saved/preview versions, analysis freshness, and version history controls inside the customised real TuringDB visualizer. TuringDB write support remains best-effort and honest; local JSON history stays the reliable fallback.
+
+## Bit 11: Network Library and Version History UI
+
+Added a clearer Network Library inside the customised real TuringDB visualizer, with multiple local networks, create/rename/delete, visible save/load feedback, JSON import/export, and saved network browsing.
+
+Added a separate Version History panel for saved snapshots, including view, restore, compare, and analyse actions. Viewing an old version opens a read-only preview, and restoring an old version creates a new latest version instead of deleting history.
+
+Improved manual localStorage fallback using `breachpath.networks.index`, `breachpath.networks.<network_id>`, and `breachpath.currentNetworkId`, while keeping backend/TuringDB persistence honest through storage status messaging.
+
+Added top toolbar controls for Network Library, Version History, Save Version, current network/version display, and unsaved changes status.
+
+## Bit 12: Navigation and Tool Panel UX Cleanup
+
+Moved controls out of the giant fixed sidebar pattern and into navbar-driven tool panels inside the customised real TuringDB visualizer.
+
+Added separate closable panels for Network Builder, Analyse, Save / Load, Version History, and Example Networks so the canvas stays the main focus and users no longer need to scroll through one long control wall.
+
+Kept existing builder, analysis, save/load, version history, examples, highlighting, and animated path functionality while making each tool panel internally scrollable and easier to find.

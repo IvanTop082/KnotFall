@@ -119,6 +119,8 @@ export class TuringRenderer {
   update() {
     if (!this.renderer) return
 
+    this.edgeMaterial.uniforms.uTime.value = performance.now() / 1000
+
     this.nodeMeshes.forEach((mesh, i) => {
       mesh.count = getNodeDrawRange(i, this.instance.nodes.length)
     })
@@ -264,6 +266,8 @@ export class TuringRenderer {
       const vec = new THREE.Vector2(a.x - b.x, a.y - b.y)
 
       this.edgeMeshes[bufIndex].setUniformAt('uOpacity', edgeIndex, e.opacity ?? 0.75)
+      this.edgeMeshes[bufIndex].setUniformAt('uDashEnabled', edgeIndex, e.exposureAnimated ? 1 : 0)
+      this.edgeMeshes[bufIndex].setUniformAt('uDashSeverity', edgeIndex, e.exposureSeverity ?? 0)
       const color =
         e.color !== undefined
           ? new THREE.Color(e.color)

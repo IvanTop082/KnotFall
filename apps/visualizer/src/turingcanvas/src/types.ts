@@ -99,6 +99,8 @@ export type TuringEdge = {
   target: TuringNode
   color?: THREE.Color
   opacity?: number
+  exposureAnimated?: boolean
+  exposureSeverity?: number
   data?: NodeData
 }
 

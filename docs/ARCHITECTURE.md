@@ -125,3 +125,28 @@ Bit 9 adds backend save/load endpoints for user-created networks:
 Saved networks use IDs such as `home_network`; the intended TuringDB graph name is `breachpath_home_network`. The backend attempts an isolated TuringDB write when the Python SDK and server are available. Because the exact SDK write/reset workflow can vary, local JSON history under `data/saved_networks/` is the reliable temporary commit metadata fallback and is ignored by Git.
 
 Each save creates a commit-like history entry with `commit_id`, `version`, `message`, `created_at`, `node_count`, and `edge_count`. This gives BreachPath a GitHub-like version trail now, while leaving room for native TuringDB branching/versioning later.
+
+Bit 10 extends this into a GitHub-like version-history workflow:
+
+- `POST /networks/save-version` creates a manual saved version with a message, timestamp, counts, graph hash, and graph snapshot.
+- `GET /networks/{network_id}/versions` lists saved versions and whether each version has been analysed.
+- `GET /networks/{network_id}/versions/{version}` loads a specific graph snapshot for read-only preview.
+- `POST /networks/{network_id}/restore/{version}` restores an old graph by creating a new latest version with message `Restored from version X`.
+- `GET /networks/{network_id}/compare?from_version=1&to_version=2` returns added/removed nodes, added/removed edges, criticality changes, and edge relationship changes.
+- `GET /networks/storage-status` reports whether the TuringDB HTTP API appears connected or whether BreachPath is using the local JSON fallback.
+
+Analysis is now tied to saved versions when the UI supplies network metadata. `POST /analysis/compromised` returns `network_id`, `version`, `graph_hash`, `simulation_type`, and `analysed_at`. When `network_id` and `version` are present, the backend stores an analysis audit entry on that saved version without breaking the existing local graph analysis path.
+
+The current TuringDB persistence layer is intentionally conservative: it attempts a TuringDB write when the SDK and server are available, but it does not fake success if the write fails. Local JSON remains the reliable history and demo fallback until native TuringDB branch/version semantics are fully integrated.
+
+Bit 11 adds a browser-side Network Library so the demo remains usable even when TuringDB or FastAPI is not running. The localStorage fallback uses explicit keys:
+
+- `breachpath.networks.index` stores the list of saved network IDs.
+- `breachpath.networks.<network_id>` stores one named network with all version snapshots.
+- `breachpath.currentNetworkId` stores the last selected network ID.
+
+Each local network stores a `latest_version` and a `versions` array. Every version contains commit-like metadata, graph hash, node count, edge count, timestamp, message, and the full graph snapshot. This allows multiple networks such as `Home Network` and `Office Network` to be created, switched, exported, imported, compared, and restored without overwriting each other.
+
+Restore is non-destructive. Restoring version `v3` creates a new latest version with message `Restored from v3`; it does not delete `v4` or rewrite earlier history.
+
+Analysis remains tied to a graph state by `network_id`, network name, version, graph hash, selected node, simulation type, and timestamp. If the current graph changes after analysis, the UI keeps the old analysis visible but marks it outdated and prompts the user to save a new version or re-run analysis.

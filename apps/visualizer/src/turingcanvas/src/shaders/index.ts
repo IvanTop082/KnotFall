@@ -30,7 +30,12 @@ export const getEdgeMaterial = () =>
     side: THREE.DoubleSide,
     vertexShader: edgeVert,
     fragmentShader: edgeFrag,
-    uniforms: { uOpacity: { value: 1.0 } },
+    uniforms: {
+      uOpacity: { value: 1.0 },
+      uDashEnabled: { value: 0.0 },
+      uDashSeverity: { value: 0.0 },
+      uTime: { value: 0.0 },
+    },
     blending: THREE.CustomBlending,
     blendSrc: THREE.SrcAlphaFactor,
     depthTest: false,

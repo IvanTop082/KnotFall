@@ -1,11 +1,15 @@
 import { useMemo } from 'react'
 
-import { useAppStore } from '@/stores'
+import { useAppStore, useBreachPathStore } from '@/stores'
 import useGraphInfo from '@/hooks/use-graph-info'
 
 export const TuringTopBar = () => {
   const page = useAppStore((state) => state.page)
   const graphName = useAppStore((state) => state.graphName)
+  const storageStatusLabel = useBreachPathStore((state) => state.storageStatusLabel)
+  const savedNetworkName = useBreachPathStore((state) => state.savedNetworkName)
+  const savedNetworkVersion = useBreachPathStore((state) => state.savedNetworkVersion)
+  const hasUnsavedChanges = useBreachPathStore((state) => state.hasUnsavedChanges)
   const graph = useGraphInfo(graphName)
 
   const rightTitle = useMemo(
@@ -32,7 +36,12 @@ export const TuringTopBar = () => {
         </span>
       </div>
       <div className="rounded-md border border-grey-500 px-3 py-1 text-sm text-content-secondary">
-        Current network: {graphName ?? 'breachpath_demo'}
+        Current network: {savedNetworkName ?? graphName ?? 'breachpath_demo'}
+        {savedNetworkVersion ? ` v${savedNetworkVersion}` : ''}
+        {hasUnsavedChanges ? ' (unsaved changes)' : ''}
+      </div>
+      <div className="rounded-md border border-grey-500 px-3 py-1 text-sm text-content-secondary">
+        {storageStatusLabel}
       </div>
     </div>
   )

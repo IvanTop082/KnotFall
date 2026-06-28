@@ -55,22 +55,14 @@ From the BreachPath project root:
 docker compose -f docker-compose.turingdb.yml up
 ```
 
-## Verify
-
-Open the visualizer:
-
-```text
-http://localhost:18080
-```
-
-Select `attack_scenarios`, then run:
-
-```cypher
-MATCH (n) RETURN n LIMIT 50
-```
-
-The TuringDB API should be available at:
+## TuringDB API
 
 ```text
 http://localhost:16666
 ```
+
+Use POST endpoints such as `/list_avail_graphs` and `/query`. A GET to `/` returns HTTP 405
+and does **not** mean the server is down.
+
+For BreachPath network persistence through Docker HTTP (no Windows Python SDK), see
+[docs/TURINGDB_PERSISTENCE.md](./TURINGDB_PERSISTENCE.md).

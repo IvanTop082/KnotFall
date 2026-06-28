@@ -2,6 +2,7 @@ import type { NodeEntry } from '@/api/models/nodeEntry.model'
 import {
   compareBreachPathNetworkVersions,
   deleteBreachPathNetwork,
+  formatStorageStatusLabel,
   getBreachPathStorageStatus,
   listBreachPathNetworks,
   loadBreachPathNetwork,
@@ -9,8 +10,10 @@ import {
   restoreBreachPathNetworkVersion,
   saveBreachPathNetworkVersionForNetwork,
   listBreachPathNetworkVersions,
+  storageStatusBadgeClass,
   type BreachPathNetworkCommit,
   type BreachPathNetworkCompare,
+  type BreachPathNetworkSummary,
 } from '@/api/breachpath'
 import {
   CYBER_EDGE_TEMPLATES,
@@ -25,29 +28,17 @@ import {
 import { EXAMPLE_NETWORKS } from '@/breachpath/example-networks'
 import {
   buildGraphPayload,
-  compareGraphs,
   createEdgeData,
   createNodeEntryFromGraphNode,
   createNodeEntryFromTemplate,
-  deleteLocalNetwork,
   downloadGraph,
-  getLatestLocalNetworkVersion,
-  getLocalNetworkVersion,
   graphFingerprint,
-  listLocalNetworks,
-  loadLocalNetwork,
-  loadGraphFromLocalStorage,
   nextCanvasId,
   nextEdgeId,
   nextNodeSlug,
   networkIdFromName,
   nodeEntryToGraphNode,
-  renameLocalNetwork,
-  restoreLocalNetworkVersion,
-  saveLocalNetworkVersion,
-  saveGraphToLocalStorage,
   type BreachPathGraphPayload,
-  type BreachPathLocalNetworkSummary,
 } from '@/breachpath/graph-utils'
 import {
   useAppStore,
@@ -93,7 +84,8 @@ export function BreachPathBuilderPanel() {
   const setSavedNetworkVersion = useBreachPathStore((state) => state.setSavedNetworkVersion)
   const setNetworkNameInStore = useBreachPathStore((state) => state.setNetworkName)
   const setPreviewVersion = useBreachPathStore((state) => state.setPreviewVersion)
-  const setStorageStatusLabel = useBreachPathStore((state) => state.setStorageStatusLabel)
+  const setStorageStatus = useBreachPathStore((state) => state.setStorageStatus)
+  const storageConnected = useBreachPathStore((state) => state.storageConnected)
   const setCurrentGraphHash = useBreachPathStore((state) => state.setCurrentGraphHash)
   const selectNodeForAnalysis = useBreachPathStore((state) => state.selectNodeForAnalysis)
   const runAnalysisForSelectedNode = useBreachPathStore(
@@ -129,7 +121,7 @@ export function BreachPathBuilderPanel() {
   const [versionHistory, setVersionHistory] = useState<BreachPathNetworkCommit[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [compareResult, setCompareResult] = useState<BreachPathNetworkCompare | undefined>()
-  const [localNetworks, setLocalNetworks] = useState<BreachPathLocalNetworkSummary[]>([])
+  const [savedNetworks, setSavedNetworks] = useState<BreachPathNetworkSummary[]>([])
   const [backendNetworkCount, setBackendNetworkCount] = useState<number | undefined>()
   const [sourceCanvasId, setSourceCanvasId] = useState('')
   const [targetCanvasId, setTargetCanvasId] = useState('')
@@ -204,13 +196,32 @@ export function BreachPathBuilderPanel() {
     setNetworkNameInStore(networkName)
   }, [networkName, setNetworkNameInStore])
 
-  const refreshLocalNetworkLibrary = () => {
-    setLocalNetworks(listLocalNetworks())
+  const refreshNetworkLibrary = async () => {
+    if (!storageConnected) {
+      setSavedNetworks([])
+      setBackendNetworkCount(undefined)
+      return
+    }
+
+    try {
+      const networks = await listBreachPathNetworks()
+      setSavedNetworks(networks)
+      setBackendNetworkCount(networks.length)
+    } catch {
+      setSavedNetworks([])
+      setBackendNetworkCount(undefined)
+    }
+  }
+
+  const requireStorage = () => {
+    if (storageConnected) return true
+    window.alert('TuringDB is required but not connected. Start Docker/TuringDB first.')
+    return false
   }
 
   useEffect(() => {
-    refreshLocalNetworkLibrary()
-  }, [])
+    refreshNetworkLibrary().catch(() => undefined)
+  }, [storageConnected])
 
   useEffect(() => {
     let cancelled = false
@@ -218,36 +229,28 @@ export function BreachPathBuilderPanel() {
     getBreachPathStorageStatus()
       .then((status) => {
         if (cancelled) return
-        setStorageStatusLabel(
-          status.status === 'connected'
-            ? 'Storage: TuringDB connected'
-            : 'Storage: Local fallback'
-        )
+        setStorageStatus({
+          label: formatStorageStatusLabel(status),
+          className: storageStatusBadgeClass(status),
+          connected: status.connected,
+          mode: status.mode,
+        })
       })
       .catch(() => {
-        if (!cancelled) setStorageStatusLabel('Storage: Local fallback')
+        if (!cancelled) {
+          setStorageStatus({
+            label: 'Storage: TuringDB disconnected',
+            className: 'text-red-200 border-red-700/70',
+            connected: false,
+            mode: 'turingdb',
+          })
+        }
       })
 
     return () => {
       cancelled = true
     }
-  }, [setStorageStatusLabel])
-
-  useEffect(() => {
-    let cancelled = false
-
-    listBreachPathNetworks()
-      .then((networks) => {
-        if (!cancelled) setBackendNetworkCount(networks.length)
-      })
-      .catch(() => {
-        if (!cancelled) setBackendNetworkCount(undefined)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  }, [setStorageStatus])
 
   const sourceNode = useMemo(
     () => graphNodes.find((node) => String(node.canvasId) === sourceCanvasId),
@@ -405,45 +408,24 @@ export function BreachPathBuilderPanel() {
     targetNetworkId = networkId,
     syncLatestVersion = true
   ) => {
+    if (!storageConnected) {
+      setVersionHistory([])
+      return []
+    }
+
     setHistoryLoading(true)
     try {
-      const localNetwork = loadLocalNetwork(targetNetworkId)
-      const localHistory: BreachPathNetworkCommit[] =
-        localNetwork?.versions
-          .map((version) => ({
-            commit_id: version.commit_id,
-            version: version.version,
-            message: version.message,
-            created_at: version.created_at,
-            node_count: version.node_count,
-            edge_count: version.edge_count,
-            analysed: Boolean(version.analysed),
-            analysis_count: version.analysis_count ?? 0,
-          }))
-          .sort((first, second) => second.version - first.version) ?? []
-      let history = localHistory
-
-      try {
-        const backendHistory = await listBreachPathNetworkVersions(targetNetworkId)
-        if (backendHistory.length > history.length) history = backendHistory
-      } catch {
-        // Local version history remains the reliable browser fallback.
-      }
-
+      const history = await listBreachPathNetworkVersions(targetNetworkId)
       setVersionHistory(history)
       const latestVersion = Math.max(0, ...history.map((version) => version.version))
       if (syncLatestVersion && latestVersion > 0) {
-        const latestLocalVersion = localNetwork
-          ? getLatestLocalNetworkVersion(localNetwork)
-          : undefined
-        setSavedNetworkVersion(
-          targetNetworkId,
-          latestVersion,
-          localNetwork?.name,
-          latestLocalVersion?.graph_hash
-        )
+        const savedNetwork = savedNetworks.find((network) => network.network_id === targetNetworkId)
+        setSavedNetworkVersion(targetNetworkId, latestVersion, savedNetwork?.name ?? networkName, undefined)
       }
       return history
+    } catch (error) {
+      setVersionHistory([])
+      throw error
     } finally {
       setHistoryLoading(false)
     }
@@ -465,6 +447,8 @@ export function BreachPathBuilderPanel() {
   }
 
   const saveCurrentVersion = async (defaultMessage = 'Saved network update') => {
+    if (!requireStorage()) return false
+
     if (isReadOnlyPreview) {
       setStatusMessage('Read-only preview: use Restore to create a new latest version from this graph.')
       return false
@@ -476,43 +460,26 @@ export function BreachPathBuilderPanel() {
         commitMessage.trim() ||
         window.prompt('Version message', defaultMessage)?.trim() ||
         defaultMessage
-      const localSave = saveLocalNetworkVersion({
+      const response = await saveBreachPathNetworkVersionForNetwork({
         networkId: identity.networkId,
         name: identity.name,
         graph: currentGraph(),
         message,
       })
 
-      setNetworkId(localSave.network.network_id)
-      setNetworkName(localSave.network.name)
+      setNetworkId(response.network_id)
+      setNetworkName(response.name ?? identity.name)
       setCommitMessage(message)
       setSavedNetworkVersion(
-        localSave.network.network_id,
-        localSave.version.version,
-        localSave.network.name,
-        localSave.version.graph_hash
+        response.network_id,
+        response.version,
+        response.name ?? identity.name,
+        undefined
       )
       setPreviewVersion(undefined)
-      refreshLocalNetworkLibrary()
-      await refreshVersionHistory(localSave.network.network_id, false)
-
-      try {
-        const response = await saveBreachPathNetworkVersionForNetwork({
-          networkId: localSave.network.network_id,
-          name: localSave.network.name,
-          graph: currentGraph(),
-          message,
-        })
-        const warning = response.warning ? ` ${response.warning}` : ''
-        setStatusMessage(
-          `Network saved locally as v${localSave.version.version}. Backend ${response.storage_backend}.${warning}`
-        )
-      } catch (backendError) {
-        setStatusMessage(
-          `Network saved locally as v${localSave.version.version}. Backend/TuringDB not available, using local fallback.`
-        )
-      }
-
+      await refreshNetworkLibrary()
+      await refreshVersionHistory(response.network_id, false)
+      setStatusMessage(`Saved ${response.name ?? identity.name} v${response.version} to TuringDB.`)
       return true
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not save network.')
@@ -525,24 +492,7 @@ export function BreachPathBuilderPanel() {
   }
 
   const loadFromBackend = async () => {
-    const localNetwork = loadLocalNetwork(networkId)
-    const latestLocalVersion = localNetwork ? getLatestLocalNetworkVersion(localNetwork) : undefined
-
-    if (localNetwork && latestLocalVersion) {
-      loadGraph(latestLocalVersion.graph)
-      setNetworkId(localNetwork.network_id)
-      setNetworkName(localNetwork.name)
-      setSavedNetworkVersion(
-        localNetwork.network_id,
-        latestLocalVersion.version,
-        localNetwork.name,
-        latestLocalVersion.graph_hash
-      )
-      setPreviewVersion(undefined)
-      await refreshVersionHistory(localNetwork.network_id, false)
-      setStatusMessage(`Loaded ${localNetwork.name} v${latestLocalVersion.version}.`)
-      return
-    }
+    if (!requireStorage()) return
 
     try {
       const saved = await loadBreachPathNetwork(networkId)
@@ -552,89 +502,71 @@ export function BreachPathBuilderPanel() {
       setSavedNetworkVersion(saved.network_id, saved.version, saved.name, graphFingerprint(saved.graph))
       setPreviewVersion(undefined)
       await refreshVersionHistory(saved.network_id, false)
-      setStatusMessage(`Loaded ${saved.name} v${saved.version} from backend.`)
+      setStatusMessage(`Loaded ${saved.name} v${saved.version} from TuringDB.`)
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not load network.')
     }
   }
 
   const loadNetworkFromLibrary = async (targetNetworkId: string) => {
-    const localNetwork = loadLocalNetwork(targetNetworkId)
-    const latestLocalVersion = localNetwork ? getLatestLocalNetworkVersion(localNetwork) : undefined
+    if (!requireStorage()) return
 
-    if (!localNetwork || !latestLocalVersion) {
-      setStatusMessage(`Saved network not found locally: ${targetNetworkId}`)
-      return
+    try {
+      const saved = await loadBreachPathNetwork(targetNetworkId)
+      loadGraph(saved.graph)
+      setNetworkId(saved.network_id)
+      setNetworkName(saved.name)
+      setSavedNetworkVersion(
+        saved.network_id,
+        saved.version,
+        saved.name,
+        graphFingerprint(saved.graph)
+      )
+      setPreviewVersion(undefined)
+      setCompareResult(undefined)
+      await refreshVersionHistory(saved.network_id, false)
+      setStatusMessage(`Loaded ${saved.name} v${saved.version} from TuringDB.`)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : `Could not load ${targetNetworkId}.`)
     }
-
-    loadGraph(latestLocalVersion.graph)
-    setNetworkId(localNetwork.network_id)
-    setNetworkName(localNetwork.name)
-    setSavedNetworkVersion(
-      localNetwork.network_id,
-      latestLocalVersion.version,
-      localNetwork.name,
-      latestLocalVersion.graph_hash
-    )
-    setPreviewVersion(undefined)
-    setCompareResult(undefined)
-    await refreshVersionHistory(localNetwork.network_id, false)
-    setStatusMessage(`Loaded ${localNetwork.name} v${latestLocalVersion.version}.`)
   }
 
   const renameCurrentNetwork = () => {
     const nextName = window.prompt('Rename network', networkName)?.trim()
     if (!nextName) return
 
-    try {
-      if (loadLocalNetwork(networkId)) renameLocalNetwork(networkId, nextName)
-      setNetworkName(nextName)
-      setNetworkNameInStore(nextName)
-      refreshLocalNetworkLibrary()
-      setStatusMessage(`Renamed current network to ${nextName}.`)
-    } catch (error) {
-      setStatusMessage(error instanceof Error ? error.message : 'Could not rename network.')
-    }
+    setNetworkName(nextName)
+    setNetworkNameInStore(nextName)
+    setStatusMessage(`Renamed current network to ${nextName}. Save to persist the new name.`)
   }
 
   const deleteNetworkFromLibrary = async (targetNetworkId: string) => {
-    const localNetwork = loadLocalNetwork(targetNetworkId)
-    const label = localNetwork?.name ?? targetNetworkId
-    const confirmed = window.confirm(`Delete ${label}? This removes the local saved history.`)
-    if (!confirmed) return
+    if (!requireStorage()) return
 
-    deleteLocalNetwork(targetNetworkId)
-    refreshLocalNetworkLibrary()
-    setVersionHistory([])
-    setCompareResult(undefined)
+    const network = savedNetworks.find((entry) => entry.network_id === targetNetworkId)
+    const label = network?.name ?? targetNetworkId
+    const confirmed = window.confirm(`Delete ${label}? This removes saved TuringDB versions metadata.`)
+    if (!confirmed) return
 
     try {
       await deleteBreachPathNetwork(targetNetworkId)
-    } catch {
-      // Backend delete is best-effort; local delete is the visible source of truth.
-    }
+      await refreshNetworkLibrary()
+      setVersionHistory([])
+      setCompareResult(undefined)
 
-    if (targetNetworkId === networkId) {
-      setSavedNetworkVersion(targetNetworkId, undefined, undefined, undefined)
-    }
+      if (targetNetworkId === networkId) {
+        setSavedNetworkVersion(targetNetworkId, undefined, undefined, undefined)
+      }
 
-    setStatusMessage(`Deleted ${label} from local Network Library.`)
+      setStatusMessage(`Deleted ${label} from TuringDB-backed storage.`)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Could not delete network.')
+    }
   }
 
   const loadVersionPreview = async (version: number) => {
-    const localSnapshot = getLocalNetworkVersion(networkId, version)
-    if (localSnapshot) {
-      const selectedNodeId = selectedNode?.breachPathNodeId
-      loadGraph(localSnapshot.graph, selectedNodeId)
-      setPreviewVersion(localSnapshot.version)
-      setStatusMessage(`Viewing v${localSnapshot.version}. This is not the latest version.`)
-      return {
-        network_id: networkId,
-        name: networkName,
-        graph: localSnapshot.graph,
-        version: localSnapshot.version,
-        graph_hash: localSnapshot.graph_hash,
-      }
+    if (!requireStorage()) {
+      throw new Error('TuringDB is required but not connected.')
     }
 
     const snapshot = await loadBreachPathNetworkVersion(networkId, version)
@@ -648,33 +580,29 @@ export function BreachPathBuilderPanel() {
   }
 
   const restoreVersion = async (version: number) => {
+    if (!requireStorage()) return
+
     const confirmed = window.confirm(
       `Restore version ${version}? This creates a new latest version and keeps history intact.`
     )
     if (!confirmed) return
 
     try {
-      const localRestore = restoreLocalNetworkVersion(networkId, version)
-      loadGraph(localRestore.version.graph, selectedNode?.breachPathNodeId)
-      setNetworkId(localRestore.network.network_id)
-      setNetworkName(localRestore.network.name)
+      const response = await restoreBreachPathNetworkVersion(networkId, version)
+      const restored = await loadBreachPathNetworkVersion(networkId, response.version)
+      loadGraph(restored.graph, selectedNode?.breachPathNodeId)
+      setNetworkId(response.network_id)
+      setNetworkName(response.name ?? networkName)
       setSavedNetworkVersion(
-        localRestore.network.network_id,
-        localRestore.version.version,
-        localRestore.network.name,
-        localRestore.version.graph_hash
+        response.network_id,
+        response.version,
+        response.name ?? networkName,
+        graphFingerprint(restored.graph)
       )
       setPreviewVersion(undefined)
-      refreshLocalNetworkLibrary()
-      await refreshVersionHistory(localRestore.network.network_id, false)
-
-      try {
-        await restoreBreachPathNetworkVersion(networkId, version)
-      } catch {
-        // Backend restore is best-effort; local restore is already complete.
-      }
-
-      setStatusMessage(`Restored v${version} as new version ${localRestore.version.version}.`)
+      await refreshNetworkLibrary()
+      await refreshVersionHistory(response.network_id, false)
+      setStatusMessage(`Restored v${version} as new version ${response.version}.`)
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not restore version.')
     }
@@ -719,18 +647,8 @@ export function BreachPathBuilderPanel() {
     }
 
     try {
-      const fromSnapshot = getLocalNetworkVersion(networkId, version)
-      const toSnapshot = getLocalNetworkVersion(networkId, targetVersion)
-      const result =
-        fromSnapshot && toSnapshot
-          ? {
-              network_id: networkId,
-              from_version: version,
-              to_version: targetVersion,
-              ...compareGraphs(fromSnapshot.graph, toSnapshot.graph),
-            }
-          : await compareBreachPathNetworkVersions(networkId, version, targetVersion)
-      setCompareResult(result as BreachPathNetworkCompare)
+      const result = await compareBreachPathNetworkVersions(networkId, version, targetVersion)
+      setCompareResult(result)
       setStatusMessage(`Compared v${version} with v${targetVersion}.`)
     } catch (error) {
       setStatusMessage(error instanceof Error ? error.message : 'Could not compare versions.')
@@ -788,24 +706,6 @@ export function BreachPathBuilderPanel() {
 
     loadGraph(selectedExampleNetwork.graph)
     setStatusMessage(`Loaded example network: ${selectedExampleNetwork.title}.`)
-  }
-
-  const saveLocally = () => {
-    saveGraphToLocalStorage(currentGraph())
-    saveCurrentVersion('Manual local save').catch((error) => {
-      setStatusMessage(error instanceof Error ? error.message : 'Could not save locally.')
-    })
-  }
-
-  const loadLocally = () => {
-    refreshLocalNetworkLibrary()
-    setActivePanel('save')
-    const saved = loadGraphFromLocalStorage()
-    setStatusMessage(
-      saved
-        ? 'Opened Network Library. Legacy local graph is also available through browser storage.'
-        : 'Opened Network Library. Select a saved network or create one.'
-    )
   }
 
   const importJson = async (file: File | undefined) => {
@@ -881,8 +781,8 @@ export function BreachPathBuilderPanel() {
         <section className="rounded border border-violet-700/70 bg-violet-950/20 p-3">
           <h3 className="font-semibold text-content-primary">Network Library</h3>
           <p className="mt-1 text-xs text-content-secondary">
-            Multiple saved networks live in browser localStorage first. Backend/TuringDB saving is
-            attempted when available and reported honestly.
+            Saved networks and versions are stored in TuringDB through the FastAPI backend. Export/import
+            JSON remains available for file-based sharing.
           </p>
           <p className="mt-2 rounded border border-grey-600 bg-grey-950/50 p-2 text-xs text-content-secondary">
             Current network:{' '}
@@ -927,27 +827,26 @@ export function BreachPathBuilderPanel() {
             <button
               className="app-button"
               type="button"
-              disabled={isReadOnlyPreview}
+              disabled={isReadOnlyPreview || !storageConnected}
               onClick={saveToBackend}
             >
-              Save current
-            </button>
-            <button className="app-button" type="button" onClick={loadFromBackend}>
-              Load by ID
+              Save Network
             </button>
             <button
               className="app-button"
               type="button"
-              disabled={isReadOnlyPreview}
+              disabled={!storageConnected}
+              onClick={loadFromBackend}
+            >
+              Load Network
+            </button>
+            <button
+              className="app-button"
+              type="button"
+              disabled={isReadOnlyPreview || !storageConnected}
               onClick={() => saveCurrentVersion('Saved new version')}
             >
-              Save new version
-            </button>
-            <button className="app-button" type="button" onClick={loadLocally}>
-              Browse saved
-            </button>
-            <button className="app-button" type="button" onClick={saveLocally}>
-              Save locally
+              Save Version
             </button>
             <button className="app-button" type="button" onClick={() => downloadGraph(currentGraph())}>
               Export JSON
@@ -973,29 +872,34 @@ export function BreachPathBuilderPanel() {
             Import network JSON
           </button>
 
-          {localNetworks.length >= 0 && (
+          {savedNetworks.length >= 0 && (
             <div className="mt-3 space-y-2">
               <div className="flex items-center justify-between">
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-content-secondary">
                   Saved networks
                 </h4>
-                <button className="app-button" type="button" onClick={refreshLocalNetworkLibrary}>
+                <button className="app-button" type="button" onClick={() => refreshNetworkLibrary()}>
                   Refresh
                 </button>
               </div>
-              {localNetworks.length === 0 && (
-                <p className="rounded bg-grey-950/50 p-2 text-xs text-content-secondary">
-                  No saved networks yet. Create a network, then click Save current.
+              {!storageConnected && (
+                <p className="rounded bg-red-950/40 p-2 text-xs text-red-100">
+                  TuringDB is required but not connected. Start Docker/TuringDB first.
                 </p>
               )}
-              {localNetworks.map((network) => (
+              {storageConnected && savedNetworks.length === 0 && (
+                <p className="rounded bg-grey-950/50 p-2 text-xs text-content-secondary">
+                  No saved networks yet. Create a network, then click Save Network.
+                </p>
+              )}
+              {savedNetworks.map((network) => (
                 <article
                   key={network.network_id}
                   className="rounded border border-grey-600 bg-grey-950/50 p-2"
                 >
                   <strong className="text-content-primary">{network.name}</strong>
                   <p className="mt-1 text-[11px] text-content-secondary">
-                    latest v{network.latest_version} - {network.node_count} nodes /{' '}
+                    latest v{network.version} - {network.node_count} nodes /{' '}
                     {network.edge_count} edges - saved {formatDateTime(network.updated_at)}
                   </p>
                   <div className="mt-2 grid grid-cols-2 gap-1">

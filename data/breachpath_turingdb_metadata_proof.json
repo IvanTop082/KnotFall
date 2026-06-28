@@ -1,0 +1,36 @@
+{
+  "networks": {
+    "http_persistence_proof_1782670345": {
+      "network_id": "http_persistence_proof_1782670345",
+      "name": "HTTP Proof Network",
+      "version": 2,
+      "updated_at": "2026-06-28T18:12:28.030221+00:00",
+      "latest_turingdb_graph": "breachpath_http_persistence_proof_1782670345_v2",
+      "history": [
+        {
+          "commit_id": "b37552758b6f",
+          "version": 1,
+          "message": "proof v1",
+          "created_at": "2026-06-28T18:12:25.381460+00:00",
+          "node_count": 2,
+          "edge_count": 1,
+          "graph_hash": "459529b7afcdeea382f29a405ac589800b93003ee12b72c9f587ceac6bb8ed51",
+          "turingdb_graph": "breachpath_http_persistence_proof_1782670345_v1",
+          "analyses": []
+        },
+        {
+          "commit_id": "221aa6a669fe",
+          "version": 2,
+          "message": "proof v2",
+          "created_at": "2026-06-28T18:12:28.030221+00:00",
+          "node_count": 4,
+          "edge_count": 3,
+          "graph_hash": "5fe5ad0dd2bc833c89e131dce3d427a9d2a651cad5a0aa64f07f8da3780db1c2",
+          "turingdb_graph": "breachpath_http_persistence_proof_1782670345_v2",
+          "analyses": []
+        }
+      ],
+      "storage_backend": "turingdb_http"
+    }
+  }
+}

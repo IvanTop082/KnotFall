@@ -345,7 +345,14 @@ class NetworkCompareResponse(BaseModel):
 
 
 class NetworkStorageStatusResponse(BaseModel):
-    status: str
-    storage_backend: str
-    turingdb_host: str
+    mode: str
+    connected: bool
+    repository: str
+    turingdb_url: str = ""
+    sdk_available: bool = False
+    http_server_reachable: bool = False
+    graph_writes_supported: bool = False
+    graph_storage: str = ""
+    metadata_storage: str = ""
+    storage_backend: str = ""
     message: str

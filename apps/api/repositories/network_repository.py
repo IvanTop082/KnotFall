@@ -1,8 +1,4 @@
-"""Saved network persistence for BreachPath.
-
-The local JSON history is the reliable demo fallback. TuringDB write support is
-kept isolated because the exact SDK write workflow can vary by environment.
-"""
+"""Saved network persistence for BreachPath."""
 
 from __future__ import annotations
 
@@ -13,12 +9,26 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
-from urllib.request import urlopen
+
+from ..config import (
+    BREACHPATH_STORAGE_MODE,
+    SAVED_NETWORKS_DIR,
+    TURINGDB_METADATA_PATH,
+    TURINGDB_URL,
+)
+from ..turingdb_integration.http_client import (
+    TuringDBHttpClient,
+    TuringDBHttpError,
+    sdk_available,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_STORE_DIR = PROJECT_ROOT / "data" / "saved_networks"
+DEFAULT_STORE_DIR = SAVED_NETWORKS_DIR
+
+
+class StorageUnavailableError(RuntimeError):
+    """Raised when turingdb mode is configured but persistence is unavailable."""
 
 
 @dataclass
@@ -68,6 +78,10 @@ def _commit_id(network_id: str, version: int, graph: dict[str, Any], message: st
     return sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
+def _version_graph_name(network_id: str, version: int) -> str:
+    return f"breachpath_{_safe_network_id(network_id)}_v{version}"
+
+
 class NetworkRepository:
     def save_network(
         self,
@@ -114,6 +128,11 @@ class NetworkRepository:
 
     def storage_status(self) -> dict[str, Any]:
         raise NotImplementedError
+
+    def ensure_available(self) -> None:
+        status = self.storage_status()
+        if not status.get("connected"):
+            raise StorageUnavailableError(status.get("message", "Storage is unavailable."))
 
 
 class LocalNetworkRepository(NetworkRepository):
@@ -286,17 +305,18 @@ class LocalNetworkRepository(NetworkRepository):
 
     def storage_status(self) -> dict[str, Any]:
         return {
-            "status": "local_fallback",
+            "mode": "local_fallback",
+            "connected": True,
+            "repository": "LocalNetworkRepository",
+            "turingdb_url": TURINGDB_URL,
+            "sdk_available": sdk_available(),
+            "http_server_reachable": False,
+            "graph_writes_supported": True,
+            "graph_storage": "local_json",
+            "metadata_storage": "local_json",
             "storage_backend": "local_history_fallback",
-            "turingdb_host": "",
-            "message": "Local JSON history is active. TuringDB was not used for this repository.",
+            "message": "Local JSON history is active.",
         }
-
-    def mark_latest_backend(self, network_id: str, storage_backend: str) -> None:
-        safe_id = _safe_network_id(network_id)
-        saved = self.get_network(safe_id)
-        saved["storage_backend"] = storage_backend
-        self._write_network_file(safe_id, saved)
 
     def _network_path(self, network_id: str) -> Path:
         return self.store_dir / f"{network_id}.json"
@@ -314,12 +334,48 @@ class LocalNetworkRepository(NetworkRepository):
         )
 
 
-class TuringDBNetworkRepository(NetworkRepository):
-    """Best-effort TuringDB writer with local history as source of truth."""
+class TuringDBMetadataStore:
+    def __init__(self, metadata_path: Path = TURINGDB_METADATA_PATH):
+        self.metadata_path = metadata_path
+        self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def __init__(self, host: str, local_repository: LocalNetworkRepository):
-        self.host = host
-        self.local_repository = local_repository
+    def _read(self) -> dict[str, Any]:
+        if not self.metadata_path.exists():
+            return {"networks": {}}
+        return json.loads(self.metadata_path.read_text(encoding="utf-8"))
+
+    def _write(self, payload: dict[str, Any]) -> None:
+        self.metadata_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+    def get_network(self, network_id: str) -> dict[str, Any] | None:
+        return self._read()["networks"].get(_safe_network_id(network_id))
+
+    def list_networks(self) -> list[dict[str, Any]]:
+        return list(self._read()["networks"].values())
+
+    def upsert_network(self, payload: dict[str, Any]) -> None:
+        data = self._read()
+        data["networks"][payload["network_id"]] = payload
+        self._write(data)
+
+    def delete_network(self, network_id: str) -> None:
+        data = self._read()
+        safe_id = _safe_network_id(network_id)
+        if safe_id not in data["networks"]:
+            raise FileNotFoundError(f"Saved network not found: {safe_id}")
+        del data["networks"][safe_id]
+        self._write(data)
+
+
+class TuringDBHttpNetworkRepository(NetworkRepository):
+    """Persist BreachPath graph snapshots in TuringDB via Docker HTTP; metadata locally."""
+
+    repository_name = "TuringDBHttpNetworkRepository"
+
+    def __init__(self, url: str, metadata_store: TuringDBMetadataStore | None = None):
+        self.url = url.rstrip("/")
+        self.client = TuringDBHttpClient(self.url)
+        self.metadata_store = metadata_store or TuringDBMetadataStore()
 
     def save_network(
         self,
@@ -328,43 +384,146 @@ class TuringDBNetworkRepository(NetworkRepository):
         graph: dict[str, Any],
         message: str,
     ) -> SaveResult:
-        result = self.local_repository.save_network(network_id, name, graph, message)
-        warning = self._try_write_to_turingdb(result.network_id, graph)
+        self.ensure_available()
+        safe_id = _safe_network_id(network_id)
+        saved = self.metadata_store.get_network(safe_id)
+        version = int(saved.get("version", 0)) + 1 if saved else 1
+        node_count, edge_count = _graph_counts(graph)
+        created_at = _now_iso()
+        commit_id = _commit_id(safe_id, version, graph, message)
+        resolved_name = name or (saved or {}).get("name") or safe_id
+        turingdb_graph = _version_graph_name(safe_id, version)
 
-        if warning:
-            result.warning = warning
-            return result
+        self.client.write_graph_snapshot(
+            turingdb_graph,
+            graph.get("nodes", []),
+            graph.get("edges", []),
+        )
 
-        result.storage_backend = "turingdb_with_local_history"
-        self.local_repository.mark_latest_backend(result.network_id, result.storage_backend)
-        return result
+        commit = {
+            "commit_id": commit_id,
+            "version": version,
+            "message": message,
+            "created_at": created_at,
+            "node_count": node_count,
+            "edge_count": edge_count,
+            "graph_hash": graph_hash(graph),
+            "turingdb_graph": turingdb_graph,
+            "analyses": [],
+        }
+        history = [*saved.get("history", [])] if saved else []
+        history.append(commit)
+
+        self.metadata_store.upsert_network(
+            {
+                "network_id": safe_id,
+                "name": resolved_name,
+                "version": version,
+                "updated_at": created_at,
+                "latest_turingdb_graph": turingdb_graph,
+                "history": history,
+                "storage_backend": "turingdb_http",
+            }
+        )
+
+        return SaveResult(
+            network_id=safe_id,
+            name=resolved_name,
+            commit_id=commit_id,
+            version=version,
+            message=message,
+            created_at=created_at,
+            node_count=node_count,
+            edge_count=edge_count,
+            status="saved",
+            storage_backend="turingdb_http",
+        )
 
     def get_network(self, network_id: str) -> dict[str, Any]:
-        return self.local_repository.get_network(network_id)
+        self.ensure_available()
+        saved = self.metadata_store.get_network(network_id)
+        if not saved:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+
+        latest_version = int(saved["version"])
+        version_snapshot = self.get_version(network_id, latest_version)
+        return {
+            "network_id": saved["network_id"],
+            "name": saved["name"],
+            "graph": version_snapshot["graph"],
+            "graph_hash": version_snapshot.get("graph_hash") or graph_hash(version_snapshot["graph"]),
+            "version": latest_version,
+            "commit_id": version_snapshot["commit_id"],
+            "updated_at": saved["updated_at"],
+            "history": saved.get("history", []),
+            "storage_backend": "turingdb_http",
+        }
 
     def list_networks(self) -> list[dict[str, Any]]:
-        return self.local_repository.list_networks()
+        self.ensure_available()
+        summaries = []
+        for saved in self.metadata_store.list_networks():
+            latest_commit = _find_version(saved, int(saved.get("version", 0)))
+            summaries.append(
+                {
+                    "network_id": saved["network_id"],
+                    "name": saved["name"],
+                    "version": saved["version"],
+                    "updated_at": saved["updated_at"],
+                    "node_count": latest_commit.get("node_count", 0) if latest_commit else 0,
+                    "edge_count": latest_commit.get("edge_count", 0) if latest_commit else 0,
+                    "storage_backend": "turingdb_http",
+                }
+            )
+        return summaries
 
     def delete_network(self, network_id: str) -> None:
-        self.local_repository.delete_network(network_id)
+        self.ensure_available()
+        self.metadata_store.delete_network(network_id)
 
     def get_history(self, network_id: str) -> list[dict[str, Any]]:
-        return self.local_repository.get_history(network_id)
+        saved = self.metadata_store.get_network(network_id)
+        if not saved:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+        return [_version_summary(commit) for commit in saved.get("history", [])]
 
     def get_version(self, network_id: str, version: int) -> dict[str, Any]:
-        return self.local_repository.get_version(network_id, version)
+        self.ensure_available()
+        saved = self.metadata_store.get_network(network_id)
+        if not saved:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+
+        commit = _find_version(saved, version)
+        if not commit:
+            raise FileNotFoundError(f"Version {version} not found for network {network_id}")
+
+        turingdb_graph = commit.get("turingdb_graph") or _version_graph_name(network_id, version)
+        graph = self.client.read_graph_snapshot(turingdb_graph)
+
+        return {
+            "network_id": saved["network_id"],
+            "name": saved["name"],
+            "graph": graph,
+            "version": commit["version"],
+            "commit_id": commit["commit_id"],
+            "message": commit.get("message", ""),
+            "created_at": commit.get("created_at", saved.get("updated_at", "")),
+            "node_count": commit.get("node_count", _graph_counts(graph)[0]),
+            "edge_count": commit.get("edge_count", _graph_counts(graph)[1]),
+            "graph_hash": commit.get("graph_hash", graph_hash(graph)),
+            "analysed": bool(commit.get("analyses")),
+            "analysis_count": len(commit.get("analyses", [])),
+            "storage_backend": "turingdb_http",
+        }
 
     def restore_version(self, network_id: str, version: int) -> SaveResult:
-        result = self.local_repository.restore_version(network_id, version)
-        warning = self._try_write_to_turingdb(result.network_id, self.get_network(network_id)["graph"])
-
-        if warning:
-            result.warning = warning
-            return result
-
-        result.storage_backend = "turingdb_with_local_history"
-        self.local_repository.mark_latest_backend(result.network_id, result.storage_backend)
-        return result
+        version_snapshot = self.get_version(network_id, version)
+        return self.save_network(
+            network_id=network_id,
+            name=version_snapshot["name"],
+            graph=version_snapshot["graph"],
+            message=f"Restored from version {version}",
+        )
 
     def compare_versions(
         self,
@@ -372,7 +531,15 @@ class TuringDBNetworkRepository(NetworkRepository):
         from_version: int,
         to_version: int,
     ) -> dict[str, Any]:
-        return self.local_repository.compare_versions(network_id, from_version, to_version)
+        from_snapshot = self.get_version(network_id, from_version)
+        to_snapshot = self.get_version(network_id, to_version)
+        return compare_graphs(
+            network_id=_safe_network_id(network_id),
+            from_version=from_version,
+            to_version=to_version,
+            from_graph=from_snapshot["graph"],
+            to_graph=to_snapshot["graph"],
+        )
 
     def record_analysis(
         self,
@@ -380,83 +547,78 @@ class TuringDBNetworkRepository(NetworkRepository):
         version: int,
         analysis: dict[str, Any],
     ) -> None:
-        self.local_repository.record_analysis(network_id, version, analysis)
+        self.ensure_available()
+        saved = self.metadata_store.get_network(network_id)
+        if not saved:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+
+        commit = _find_version(saved, version)
+        if not commit:
+            raise FileNotFoundError(f"Version {version} not found for network {network_id}")
+
+        commit.setdefault("analyses", []).append(analysis)
+        self.metadata_store.upsert_network(saved)
 
     def storage_status(self) -> dict[str, Any]:
-        try:
-            from turingdb import TuringDB  # noqa: F401
-        except Exception as error:
+        reachable, reach_message = self.client.is_reachable()
+        sdk = sdk_available()
+        graph_writes_supported = reachable
+
+        if not reachable:
             return {
-                "status": "local_fallback",
-                "storage_backend": "local_history_fallback",
-                "turingdb_host": self.host,
-                "message": f"TuringDB SDK is not available: {error}",
+                "mode": "turingdb",
+                "connected": False,
+                "repository": self.repository_name,
+                "turingdb_url": self.url,
+                "sdk_available": sdk,
+                "http_server_reachable": False,
+                "graph_writes_supported": False,
+                "graph_storage": "turingdb",
+                "metadata_storage": "local_json",
+                "storage_backend": "turingdb_http",
+                "message": reach_message
+                or "TuringDB Docker server is not reachable. Start Docker first.",
             }
 
         try:
-            with urlopen(self.host, timeout=2) as response:
-                response.read(100)
-        except (OSError, URLError) as error:
-            return {
-                "status": "local_fallback",
-                "storage_backend": "local_history_fallback",
-                "turingdb_host": self.host,
-                "message": f"TuringDB HTTP API did not respond: {error}",
-            }
+            self.client.list_available_graphs()
+            api_known = True
+            api_message = (
+                "Connected to TuringDB through Docker HTTP API. "
+                + ("Python SDK not required." if not sdk else "Python SDK is also available.")
+            )
+        except TuringDBHttpError as error:
+            api_known = False
+            api_message = f"TuringDB server reachable but API probe failed: {error}"
 
         return {
-            "status": "connected",
-            "storage_backend": "turingdb_with_local_history",
-            "turingdb_host": self.host,
-            "message": "TuringDB HTTP API responded. Local JSON history remains the audit fallback.",
+            "mode": "turingdb",
+            "connected": api_known and graph_writes_supported,
+            "repository": self.repository_name,
+            "turingdb_url": self.url,
+            "sdk_available": sdk,
+            "http_server_reachable": True,
+            "graph_writes_supported": graph_writes_supported,
+            "graph_storage": "turingdb",
+            "metadata_storage": "local_json",
+            "storage_backend": "turingdb_http",
+            "message": (
+                api_message
+                if api_known
+                else api_message
+                + " Graphs stored in TuringDB; metadata stored locally because TuringDB metadata API was not found."
+            ),
         }
 
-    def _try_write_to_turingdb(self, network_id: str, graph: dict[str, Any]) -> str | None:
-        try:
-            from turingdb import TuringDB
-        except Exception as error:
-            return (
-                "Saved to local history fallback. TuringDB SDK was not available "
-                f"in this Python environment: {error}"
-            )
 
-        graph_name = f"breachpath_{network_id}"
-
-        try:
-            client = TuringDB(host=self.host)
-            try:
-                client.create_graph(graph_name)
-            except Exception:
-                try:
-                    client.load_graph(graph_name)
-                except Exception:
-                    pass
-
-            client.set_graph(graph_name)
-            change = client.new_change()
-            client.checkout(change=change)
-
-            for node in graph.get("nodes", []):
-                client.query(_create_node_query(node))
-            client.query("COMMIT")
-
-            for edge in graph.get("edges", []):
-                client.query(_create_edge_query(edge))
-
-            client.query("CHANGE SUBMIT")
-            client.checkout()
-            return None
-        except Exception as error:
-            return (
-                "Saved to local history fallback. TuringDB write is isolated and "
-                f"did not complete for graph {graph_name}: {error}"
-            )
-
-
-def get_network_repository(turingdb_host: str) -> NetworkRepository:
-    return TuringDBNetworkRepository(
-        host=turingdb_host,
-        local_repository=LocalNetworkRepository(),
+def get_network_repository() -> NetworkRepository:
+    mode = BREACHPATH_STORAGE_MODE
+    if mode == "local_fallback":
+        return LocalNetworkRepository()
+    if mode == "turingdb":
+        return TuringDBHttpNetworkRepository(url=TURINGDB_URL)
+    raise ValueError(
+        f"Invalid BREACHPATH_STORAGE_MODE={mode!r}. Use 'turingdb' or 'local_fallback'."
     )
 
 
@@ -563,45 +725,3 @@ def _edge_key(edge: dict[str, Any]) -> str:
     if not source or not target:
         return ""
     return f"{source}->{relationship}->{target}"
-
-
-def _escape_cypher_string(value: Any) -> str:
-    return str(value).replace("\\", "\\\\").replace("'", "\\'")
-
-
-def _cypher_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, int | float):
-        return str(value)
-    return f"'{_escape_cypher_string(value)}'"
-
-
-def _safe_identifier(value: Any, fallback: str) -> str:
-    identifier = re.sub(r"[^A-Za-z0-9_]", "_", str(value or fallback))
-    if identifier and identifier[0].isdigit():
-        identifier = f"{fallback}_{identifier}"
-    return identifier or fallback
-
-
-def _cypher_properties(data: dict[str, Any]) -> str:
-    parts = [f"{key}: {_cypher_value(value)}" for key, value in data.items()]
-    return "{ " + ", ".join(parts) + " }"
-
-
-def _create_node_query(node: dict[str, Any]) -> str:
-    node_label = _safe_identifier(node.get("type") or node.get("node_type"), "BreachPathNode")
-    return f"CREATE (:BreachPathNode:{node_label} {_cypher_properties(node)})"
-
-
-def _create_edge_query(edge: dict[str, Any]) -> str:
-    relationship = _safe_identifier(
-        edge.get("relationship") or edge.get("edge_type"),
-        "RELATES_TO",
-    ).upper()
-    source_id = _escape_cypher_string(edge["source"])
-    target_id = _escape_cypher_string(edge["target"])
-    return (
-        f"MATCH (source {{id: '{source_id}'}}), (target {{id: '{target_id}'}}) "
-        f"CREATE (source)-[:{relationship} {_cypher_properties(edge)}]->(target)"
-    )

@@ -44,6 +44,9 @@ export type BreachPathStore = {
   hasUnsavedChanges: boolean
   previewVersion: number | undefined
   storageStatusLabel: string
+  storageStatusClass: string
+  storageConnected: boolean
+  storageMode: 'turingdb' | 'local_fallback' | 'unknown'
   selectNodeForAnalysis: (node: NodeEntry | undefined, canvasNodeId: number) => void
   setSimulationType: (simulationType: BreachPathSimulationType) => void
   setCurrentGraphHash: (graphHash: string) => void
@@ -58,6 +61,12 @@ export type BreachPathStore = {
   setNetworkName: (name: string) => void
   setPreviewVersion: (version: number | undefined) => void
   setStorageStatusLabel: (label: string) => void
+  setStorageStatus: (args: {
+    label: string
+    className: string
+    connected: boolean
+    mode: 'turingdb' | 'local_fallback' | 'unknown'
+  }) => void
   runAnalysisForNode: (
     node: NodeEntry | undefined,
     canvasNodeId: number,
@@ -94,7 +103,10 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   lastSavedGraphHash: undefined,
   hasUnsavedChanges: false,
   previewVersion: undefined,
-  storageStatusLabel: 'Storage: Local fallback',
+  storageStatusLabel: 'Storage: TuringDB disconnected',
+  storageStatusClass: 'text-red-200 border-red-700/70',
+  storageConnected: false,
+  storageMode: 'turingdb',
   setSimulationType: (simulationType) => set({ simulationType }),
   setAnimateExposurePaths: (animate) => set({ animateExposurePaths: animate }),
   setShowAllReachable: (show) => set({ showAllReachable: show }),
@@ -110,6 +122,13 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   setNetworkName: (name) => set({ savedNetworkName: name }),
   setPreviewVersion: (version) => set({ previewVersion: version }),
   setStorageStatusLabel: (label) => set({ storageStatusLabel: label }),
+  setStorageStatus: ({ label, className, connected, mode }) =>
+    set({
+      storageStatusLabel: label,
+      storageStatusClass: className,
+      storageConnected: connected,
+      storageMode: mode,
+    }),
   setCurrentGraphHash: (graphHash) =>
     set((state) => {
       if (state.currentGraphHash === graphHash) return state

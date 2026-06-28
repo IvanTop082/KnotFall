@@ -238,12 +238,37 @@ export type BreachPathNetworkCompare = {
 }
 
 export type BreachPathStorageStatus = {
-  status: string
+  mode: 'turingdb' | 'local_fallback'
+  connected: boolean
+  repository: string
+  turingdb_url: string
+  sdk_available?: boolean
+  http_server_reachable?: boolean
+  graph_writes_supported?: boolean
+  graph_storage?: string
+  metadata_storage?: string
   storage_backend: string
-  turingdb_host: string
   message: string
-  mode?: 'turingdb' | 'local_fallback'
-  connected?: boolean
+}
+
+export function formatStorageStatusLabel(status: BreachPathStorageStatus): string {
+  if (status.mode === 'local_fallback') {
+    return 'Storage: Local fallback'
+  }
+  if (status.connected) {
+    return 'Storage: TuringDB connected'
+  }
+  return 'Storage: TuringDB disconnected'
+}
+
+export function storageStatusBadgeClass(status: BreachPathStorageStatus): string {
+  if (status.mode === 'local_fallback') {
+    return 'text-amber-200 border-amber-700/70'
+  }
+  if (status.connected) {
+    return 'text-green-200 border-green-700/70'
+  }
+  return 'text-red-200 border-red-700/70'
 }
 
 export type BreachPathAnalysisMetadata = {
@@ -309,20 +334,7 @@ export async function postCompromisedNodeAnalysis(
 
 export async function getBreachPathStorageStatus(): Promise<BreachPathStorageStatus> {
   const response = await fetch(`${getBreachPathApiBaseUrl()}/storage/status`)
-  const status = await parseJsonResponse<{
-    mode: 'turingdb' | 'local_fallback'
-    connected: boolean
-    message: string
-  }>(response)
-
-  return {
-    status: status.connected ? 'connected' : 'local_fallback',
-    storage_backend: status.mode,
-    turingdb_host: '',
-    message: status.message,
-    mode: status.mode,
-    connected: status.connected,
-  }
+  return parseJsonResponse<BreachPathStorageStatus>(response)
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {

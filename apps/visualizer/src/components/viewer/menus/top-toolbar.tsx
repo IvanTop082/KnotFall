@@ -1,10 +1,11 @@
 import TuringButton from '@/components/base/turing-button'
-import { getBreachPathStorageStatus, saveBreachPathNetworkVersionForNetwork } from '@/api/breachpath'
 import {
-  buildGraphPayload,
-  networkIdFromName,
-  saveLocalNetworkVersion,
-} from '@/breachpath/graph-utils'
+  formatStorageStatusLabel,
+  getBreachPathStorageStatus,
+  saveBreachPathNetworkVersionForNetwork,
+  storageStatusBadgeClass,
+} from '@/api/breachpath'
+import { buildGraphPayload, networkIdFromName } from '@/breachpath/graph-utils'
 import { useBreachPathBuilderStore, useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { CenterForceSwitch } from './actions/center-force-switch'
 import { NodeShapeSwitch } from './actions/node-shape-switch'
@@ -29,7 +30,9 @@ export const TuringTopToolBar = () => {
   const hasUnsavedChanges = useBreachPathStore((state) => state.hasUnsavedChanges)
   const previewVersion = useBreachPathStore((state) => state.previewVersion)
   const storageStatusLabel = useBreachPathStore((state) => state.storageStatusLabel)
-  const setStorageStatusLabel = useBreachPathStore((state) => state.setStorageStatusLabel)
+  const storageStatusClass = useBreachPathStore((state) => state.storageStatusClass)
+  const storageConnected = useBreachPathStore((state) => state.storageConnected)
+  const setStorageStatus = useBreachPathStore((state) => state.setStorageStatus)
   const setSavedNetworkVersion = useBreachPathStore((state) => state.setSavedNetworkVersion)
 
   const inspectorOffset = inspectNodeInfo
@@ -42,6 +45,11 @@ export const TuringTopToolBar = () => {
   const currentNetworkLabel = savedNetworkName ?? 'Unsaved network'
 
   const saveVersionFromToolbar = async () => {
+    if (!storageConnected) {
+      window.alert('TuringDB is required but not connected. Start Docker/TuringDB first.')
+      return
+    }
+
     const name =
       savedNetworkName ||
       window.prompt('Network name', 'Home Network')?.trim() ||
@@ -50,34 +58,24 @@ export const TuringTopToolBar = () => {
     const message =
       window.prompt('Version message', hasUnsavedChanges ? 'Saved changes' : 'Saved version')?.trim() ||
       'Saved version'
-    const result = saveLocalNetworkVersion({
-      networkId,
-      name,
-      graph: currentGraph,
-      message,
-    })
-
-    setSavedNetworkVersion(
-      result.network.network_id,
-      result.version.version,
-      result.network.name,
-      result.version.graph_hash
-    )
 
     try {
       const backendResult = await saveBreachPathNetworkVersionForNetwork({
-        networkId: result.network.network_id,
-        name: result.network.name,
+        networkId,
+        name,
         graph: currentGraph,
         message,
       })
-      const warning = backendResult.warning ? ` ${backendResult.warning}` : ''
-      setStatusMessage(
-        `Saved ${result.network.name} v${result.version.version} locally. Backend ${backendResult.storage_backend}.${warning}`
+      setSavedNetworkVersion(
+        backendResult.network_id,
+        backendResult.version,
+        backendResult.name ?? name,
+        undefined
       )
-    } catch {
+      setStatusMessage(`Saved ${backendResult.name ?? name} v${backendResult.version} to TuringDB.`)
+    } catch (error) {
       setStatusMessage(
-        `Saved ${result.network.name} v${result.version.version} locally. Backend/TuringDB unavailable.`
+        error instanceof Error ? error.message : 'Could not save version to TuringDB.'
       )
     }
   }
@@ -88,20 +86,28 @@ export const TuringTopToolBar = () => {
     getBreachPathStorageStatus()
       .then((status) => {
         if (cancelled) return
-        setStorageStatusLabel(
-          status.status === 'connected'
-            ? 'Storage: TuringDB connected'
-            : 'Storage: Local fallback'
-        )
+        setStorageStatus({
+          label: formatStorageStatusLabel(status),
+          className: storageStatusBadgeClass(status),
+          connected: status.connected,
+          mode: status.mode,
+        })
       })
       .catch(() => {
-        if (!cancelled) setStorageStatusLabel('Storage: Local fallback')
+        if (!cancelled) {
+          setStorageStatus({
+            label: 'Storage: TuringDB disconnected',
+            className: 'text-red-200 border-red-700/70',
+            connected: false,
+            mode: 'turingdb',
+          })
+        }
       })
 
     return () => {
       cancelled = true
     }
-  }, [setStorageStatusLabel])
+  }, [setStorageStatus])
 
   return (
     <div
@@ -153,7 +159,12 @@ export const TuringTopToolBar = () => {
           Examples
         </TuringButton>
 
-        <TuringButton icon="floppy-disk" intent="warning" onClick={saveVersionFromToolbar}>
+        <TuringButton
+          icon="floppy-disk"
+          intent="warning"
+          disabled={!storageConnected}
+          onClick={saveVersionFromToolbar}
+        >
           Save Version
         </TuringButton>
 
@@ -167,7 +178,7 @@ export const TuringTopToolBar = () => {
           {analysisVersion ? ` / v${analysisVersion}` : ' / not saved'}
           {hasUnsavedChanges ? ' / Unsaved changes' : ''}
           {' / '}
-          {storageStatusLabel}
+          <span className={storageStatusClass}>{storageStatusLabel}</span>
         </span>
       </div>
     </div>

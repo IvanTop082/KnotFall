@@ -19,7 +19,11 @@ from .graph_loader import (
 )
 from .path_finder import LocalJSONPathFinder
 from .recommendations import LocalRecommendationEngine
-from .repositories.network_repository import get_network_repository, graph_hash
+from .repositories.network_repository import (
+    StorageUnavailableError,
+    get_network_repository,
+    graph_hash,
+)
 from .schemas import (
     AttackPathResponse,
     CompromisedNodeAnalysisRequest,
@@ -286,14 +290,16 @@ def get_turingdb_status():
 
 @app.get("/storage/status")
 def get_storage_status():
-    repository = get_network_repository(TURINGDB_HOST)
-    status = repository.storage_status()
-    connected = status.get("status") == "connected"
-    return {
-        "mode": "turingdb" if connected else "local_fallback",
-        "connected": connected,
-        "message": "TuringDB connected" if connected else status.get("message", "Storage: Local fallback"),
-    }
+    repository = get_network_repository()
+    return repository.storage_status()
+
+
+def _storage_repository():
+    return get_network_repository()
+
+
+def _raise_storage_unavailable(error: StorageUnavailableError) -> None:
+    raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 @app.get("/graph", response_model=GraphResponse)
@@ -309,13 +315,17 @@ def get_graph():
 
 @app.post("/networks/save", response_model=NetworkSaveResponse)
 def save_network(request: NetworkSaveRequest):
-    repository = get_network_repository(TURINGDB_HOST)
-    result = repository.save_network(
-        network_id=request.network_id,
-        name=request.name,
-        graph=request.graph.dict(),
-        message=request.message,
-    )
+    repository = _storage_repository()
+    try:
+        repository.ensure_available()
+        result = repository.save_network(
+            network_id=request.network_id,
+            name=request.name,
+            graph=request.graph.dict(),
+            message=request.message,
+        )
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
 
     return {
         "network_id": result.network_id,
@@ -339,13 +349,17 @@ def create_or_save_network(request: NetworkSaveVersionRequest):
 
 @app.post("/networks/save-version", response_model=NetworkSaveResponse)
 def save_network_version(request: NetworkSaveVersionRequest):
-    repository = get_network_repository(TURINGDB_HOST)
-    result = repository.save_network(
-        network_id=request.network_id,
-        name=request.name,
-        graph=request.graph.dict(),
-        message=request.message,
-    )
+    repository = _storage_repository()
+    try:
+        repository.ensure_available()
+        result = repository.save_network(
+            network_id=request.network_id,
+            name=request.name,
+            graph=request.graph.dict(),
+            message=request.message,
+        )
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
 
     return {
         "network_id": result.network_id,
@@ -364,21 +378,27 @@ def save_network_version(request: NetworkSaveVersionRequest):
 
 @app.get("/networks/storage-status", response_model=NetworkStorageStatusResponse)
 def get_network_storage_status():
-    repository = get_network_repository(TURINGDB_HOST)
-    return repository.storage_status()
+    return _storage_repository().storage_status()
 
 
 @app.get("/networks", response_model=list[NetworkSummary])
 def list_saved_networks():
-    repository = get_network_repository(TURINGDB_HOST)
-    return repository.list_networks()
+    repository = _storage_repository()
+    try:
+        repository.ensure_available()
+        return repository.list_networks()
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
 
 
 @app.delete("/networks/{network_id}")
 def delete_saved_network(network_id: str):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         repository.delete_network(network_id)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -390,27 +410,36 @@ def delete_saved_network(network_id: str):
 
 @app.get("/networks/{network_id}", response_model=SavedNetworkResponse)
 def get_saved_network(network_id: str):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         return repository.get_network(network_id)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/networks/{network_id}/history", response_model=list[NetworkCommitSummary])
 def get_saved_network_history(network_id: str):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         return repository.get_history(network_id)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/networks/{network_id}/versions", response_model=list[NetworkCommitSummary])
 def get_saved_network_versions(network_id: str):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         return repository.get_history(network_id)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -432,18 +461,24 @@ def save_saved_network_version(network_id: str, request: NetworkSaveVersionReque
     response_model=SavedNetworkVersionResponse,
 )
 def get_saved_network_version(network_id: str, version: int):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         return repository.get_version(network_id, version)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.post("/networks/{network_id}/restore/{version}", response_model=NetworkSaveResponse)
 def restore_saved_network_version(network_id: str, version: int):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         result = repository.restore_version(network_id, version)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -468,9 +503,12 @@ def compare_saved_network_versions(
     from_version: int = Query(..., ge=1),
     to_version: int = Query(..., ge=1),
 ):
-    repository = get_network_repository(TURINGDB_HOST)
+    repository = _storage_repository()
     try:
+        repository.ensure_available()
         return repository.compare_versions(network_id, from_version, to_version)
+    except StorageUnavailableError as error:
+        _raise_storage_unavailable(error)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
@@ -679,7 +717,7 @@ def _record_version_analysis(network_id, version, analysis):
         return
 
     try:
-        repository = get_network_repository(TURINGDB_HOST)
+        repository = _storage_repository()
         repository.record_analysis(
             network_id=network_id,
             version=int(version),

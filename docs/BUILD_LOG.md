@@ -77,3 +77,15 @@ Fixed home-style compromise traversal so `same_network`, `can_access`, and `rout
 Added router-focused recommendations for changing the router admin password, updating firmware, disabling remote administration, separating guest/IoT devices, and reviewing connected devices.
 
 Added built-in example networks for Basic Home Network, Home + IoT Network, and Small Office Network testing.
+
+## Bit 9: Persistence, Versioning, Simulation Types, and Visual Severity
+
+Added save/load network endpoints for user-created BreachPath networks, including `POST /networks/save`, `GET /networks`, `GET /networks/{network_id}`, and `GET /networks/{network_id}/history`.
+
+Added version/history support with commit-like metadata containing commit id, version, message, timestamp, node count, and edge count. TuringDB write is attempted when available, while a local JSON history fallback keeps the demo reliable.
+
+Added graph fingerprint tracking in the visualizer so previous analysis is marked outdated when the user changes the graph after running a simulation.
+
+Added `simulation_type` to current-graph analysis for compromise, offline/destroyed, spyware, data leak, and lateral movement scenarios.
+
+Added visual severity colour coding for affected nodes/edges and pulsing highlighted exposure paths in the real TuringDB canvas.

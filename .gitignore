@@ -12,3 +12,4 @@ build/
 coverage/
 *.log
 external/
+data/saved_networks/

@@ -18,11 +18,23 @@ Edges display as clean lines without arrowheads so the network feels like a norm
 
 Criticality has defaults by device type so normal users do not need to know every impact level upfront. For example, routers, NAS/home servers, work laptops, VPN gateways, firewalls, backup servers, and databases default to `high`, while admin accounts, domain controllers, internet boundary nodes, critical services, and operations servers default to `critical`. Users can override the suggested criticality during node creation.
 
-For analysis, the visualizer sends the current graph to FastAPI with `POST /analysis/compromised`. FastAPI acts as the BreachPath brain and returns affected nodes, exposure paths, risk, and mitigation recommendations.
+For analysis, the visualizer sends the current graph to FastAPI with `POST /analysis/compromised`. FastAPI acts as the BreachPath brain and returns affected nodes, exposure paths, risk, mitigation recommendations, followed edge types, and visual severity hints for nodes and edges.
+
+`POST /analysis/compromised` supports simulation types:
+
+- `compromise` for attacker reachability from a compromised device or account.
+- `offline` for availability and resilience if a device is broken, destroyed, or offline.
+- `spyware` for monitoring/data-visibility exposure from an infected device.
+- `data_leak` for data stores, accounts, NAS, server, database, and cloud/session exposure.
+- `lateral_movement` for privilege, credential, control, and chokepoint movement paths.
 
 The BreachPath customisation adds a collapsible network builder drawer, built-in example networks for testing, a right-side `BreachPath Analysis` panel, local graph save/load/export/import using browser `localStorage`, and native TuringDB canvas highlighting for selected suspected nodes, affected nodes, affected exposure-path edges, reachable critical assets, and faded unrelated graph elements.
 
 The built-in example networks are `Basic Home Network`, `Home + IoT Network`, and `Small Office Network`. These are designed for quick demos and regression testing of router, laptop, IoT, storage, VPN, identity, and server exposure paths.
+
+The UI tracks a stable graph fingerprint and increments a lightweight version counter when the graph changes. After analysis succeeds, the analysed graph hash/version is stored. If the user adds or changes nodes/edges later, the analysis panel warns: "Network changed. Previous exposure analysis may be outdated. Re-run analysis."
+
+Visual severity is returned by the backend as `visual_severity_by_node` and `visual_severity_by_edge`. The modified real TuringDB canvas uses this to colour affected graph elements: low as blue/grey, medium as yellow/orange, high as orange/red, and critical as red/purple. Highlighted exposure edges pulse for demo-friendly path animation, while unrelated nodes and edges fade.
 
 Normal product mode hides raw database controls such as the Cypher command bar and arbitrary TuringDB example graph selection. Other TuringDB example graphs such as `attack_scenarios`, `supply_chain`, `logistics_risk`, `drone_swarm`, `power_plants`, and `poledb` are hidden from the product UI.
 
@@ -101,6 +113,15 @@ Helper scripts for seeding demo data, testing graph queries, and later TuringDB 
 
 ## Persistence
 
-Bit 6 uses browser `localStorage` for New network, Save locally, Load locally, Export JSON, and Import JSON. This is intentionally simple and demo-friendly.
+The builder still supports browser `localStorage` for New network, Save locally, Load locally, Export JSON, and Import JSON. This remains the fastest demo fallback.
 
-Long-term graph persistence should move into TuringDB so user-created BreachPath networks can be stored, queried, versioned, branched, and compared through the graph engine.
+Bit 9 adds backend save/load endpoints for user-created networks:
+
+- `POST /networks/save`
+- `GET /networks`
+- `GET /networks/{network_id}`
+- `GET /networks/{network_id}/history`
+
+Saved networks use IDs such as `home_network`; the intended TuringDB graph name is `breachpath_home_network`. The backend attempts an isolated TuringDB write when the Python SDK and server are available. Because the exact SDK write/reset workflow can vary, local JSON history under `data/saved_networks/` is the reliable temporary commit metadata fallback and is ignored by Git.
+
+Each save creates a commit-like history entry with `commit_id`, `version`, `message`, `created_at`, `node_count`, and `edge_count`. This gives BreachPath a GitHub-like version trail now, while leaving room for native TuringDB branching/versioning later.

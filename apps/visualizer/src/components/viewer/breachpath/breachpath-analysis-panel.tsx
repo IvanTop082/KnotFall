@@ -1,5 +1,6 @@
 import { getBreachPathApiBaseUrl } from '@/api/breachpath'
-import { useBreachPathStore } from '@/stores'
+import { buildGraphPayload, graphFingerprint } from '@/breachpath/graph-utils'
+import { useBreachPathStore, useCanvasStore } from '@/stores'
 import { Icon, Spinner } from '@blueprintjs/core'
 import { useMemo } from 'react'
 
@@ -13,6 +14,39 @@ export function BreachPathAnalysisPanel() {
   const analysis = useBreachPathStore((state) => state.analysis)
   const status = useBreachPathStore((state) => state.status)
   const error = useBreachPathStore((state) => state.error)
+  const currentGraphHash = useBreachPathStore((state) => state.currentGraphHash)
+  const lastAnalysisGraphHash = useBreachPathStore((state) => state.lastAnalysisGraphHash)
+  const currentGraphVersion = useBreachPathStore((state) => state.currentGraphVersion)
+  const lastAnalysisGraphVersion = useBreachPathStore((state) => state.lastAnalysisGraphVersion)
+  const lastAnalysisSimulationType = useBreachPathStore(
+    (state) => state.lastAnalysisSimulationType
+  )
+  const runAnalysisForSelectedNode = useBreachPathStore(
+    (state) => state.runAnalysisForSelectedNode
+  )
+  const canvasNodes = useCanvasStore((state) => state.nodes())
+  const canvasEdges = useCanvasStore((state) => state.edges())
+  const isAnalysisOutdated =
+    lastAnalysisGraphHash !== undefined && currentGraphHash !== lastAnalysisGraphHash
+  const analysisFreshnessLabel =
+    lastAnalysisGraphHash === undefined
+      ? 'Not analysed'
+      : isAnalysisOutdated
+        ? 'Outdated'
+        : 'Up to date'
+  const currentGraph = useMemo(
+    () => buildGraphPayload(canvasNodes, canvasEdges),
+    [canvasNodes, canvasEdges]
+  )
+  const currentGraphFingerprint = useMemo(() => graphFingerprint(currentGraph), [currentGraph])
+
+  const rerunAnalysis = () => {
+    runAnalysisForSelectedNode(
+      currentGraph,
+      currentGraphFingerprint,
+      lastAnalysisSimulationType ?? analysis?.simulation_type
+    )
+  }
 
   const highestRiskPath = useMemo(() => {
     if (!analysis?.paths.length) return undefined
@@ -59,6 +93,40 @@ export function BreachPathAnalysisPanel() {
       </header>
 
       <div className="app-scrollbar flex flex-1 flex-col gap-4 overflow-y-auto p-4">
+        <section className="rounded border border-grey-600 bg-grey-900/70 p-3 text-xs text-content-secondary">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p>Current version</p>
+              <strong className="text-content-primary">v{currentGraphVersion}</strong>
+            </div>
+            <div>
+              <p>Last analysed</p>
+              <strong className="text-content-primary">
+                {lastAnalysisGraphVersion ? `v${lastAnalysisGraphVersion}` : 'Not analysed'}
+              </strong>
+            </div>
+          </div>
+          <p
+            className={`mt-2 rounded px-2 py-1 ${
+              lastAnalysisGraphHash === undefined
+                ? 'bg-grey-800 text-content-secondary'
+                : isAnalysisOutdated
+                  ? 'bg-yellow-950/40 text-yellow-100'
+                  : 'bg-emerald-950/30 text-emerald-100'
+            }`}
+          >
+            {analysisFreshnessLabel}
+          </p>
+          {isAnalysisOutdated && (
+            <div className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-yellow-100">
+              <p>Network changed. Previous exposure analysis may be outdated. Re-run analysis.</p>
+              <button className="app-button mt-2 w-full" type="button" onClick={rerunAnalysis}>
+                Re-run analysis
+              </button>
+            </div>
+          )}
+        </section>
+
         {!selectedNode && status !== 'error' && (
           <div className="flex flex-1 items-center justify-center text-center text-sm text-content-secondary">
             Select a device on the canvas, then run analysis.
@@ -112,6 +180,9 @@ export function BreachPathAnalysisPanel() {
                 {analysis.compromised_node.id}
                 {analysis.compromised_node.type && ` - ${analysis.compromised_node.type}`}
               </p>
+              <p className="mt-2 rounded border border-violet-700/60 bg-violet-950/30 p-2 text-xs text-violet-100">
+                Simulation: {analysis.simulation_type.replace(/_/g, ' ')}
+              </p>
               {selectedNode.mappingNote && (
                 <p className="mt-2 rounded border border-yellow-700/70 bg-yellow-950/30 p-2 text-xs text-yellow-100">
                   {selectedNode.mappingNote}
@@ -158,8 +229,8 @@ export function BreachPathAnalysisPanel() {
                 Why these devices are affected
               </h3>
               <p className="mt-2 text-xs leading-5 text-content-secondary">
-                BreachPath follows typed relationships from the selected device through the
-                current graph. Devices below are reachable through those defensive exposure paths.
+                {analysis.explanation ||
+                  'BreachPath follows typed relationships from the selected device through the current graph.'}
               </p>
               {affectedDeviceIds.length ? (
                 <ul className="mt-2 grid grid-cols-1 gap-1 text-sm text-content-secondary">
@@ -306,6 +377,29 @@ export function BreachPathAnalysisPanel() {
                   ))}
                 </ul>
               )}
+            </section>
+
+            <section className="rounded border border-grey-600 bg-grey-900/70 p-3">
+              <h3 className="text-sm font-semibold text-content-primary">
+                Before/after response simulation
+              </h3>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-content-secondary">
+                <div className="rounded bg-grey-800 p-2">
+                  <p>Before risk</p>
+                  <strong className="text-content-primary">{analysis.risk_score}</strong>
+                </div>
+                <div className="rounded bg-grey-800 p-2">
+                  <p>After risk</p>
+                  <strong className="text-content-primary">--</strong>
+                </div>
+                <div className="rounded bg-grey-800 p-2">
+                  <p>Risk reduction</p>
+                  <strong className="text-content-primary">--</strong>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-content-secondary">
+                Mitigation comparison coming next.
+              </p>
             </section>
 
             <p className="rounded border border-grey-600 bg-grey-900/70 p-3 text-xs leading-5 text-content-secondary">

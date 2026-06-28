@@ -1,5 +1,10 @@
 import type { NodeEntry } from '@/api/models/nodeEntry.model'
 import {
+  loadBreachPathNetwork,
+  saveBreachPathNetwork,
+  type BreachPathSimulationType,
+} from '@/api/breachpath'
+import {
   CYBER_EDGE_TEMPLATES,
   CYBER_NODE_TEMPLATES,
   getCriticalityHelp,
@@ -16,6 +21,7 @@ import {
   createNodeEntryFromGraphNode,
   createNodeEntryFromTemplate,
   downloadGraph,
+  graphFingerprint,
   loadGraphFromLocalStorage,
   nextCanvasId,
   nextEdgeId,
@@ -49,6 +55,12 @@ export function BreachPathBuilderPanel() {
   const graphName = useAppStore((state) => state.graphName)
   const selectedNode = useBreachPathStore((state) => state.selectedNode)
   const analysisStatus = useBreachPathStore((state) => state.status)
+  const simulationType = useBreachPathStore((state) => state.simulationType)
+  const currentGraphHash = useBreachPathStore((state) => state.currentGraphHash)
+  const currentGraphVersion = useBreachPathStore((state) => state.currentGraphVersion)
+  const lastAnalysisGraphHash = useBreachPathStore((state) => state.lastAnalysisGraphHash)
+  const setSimulationType = useBreachPathStore((state) => state.setSimulationType)
+  const setCurrentGraphHash = useBreachPathStore((state) => state.setCurrentGraphHash)
   const runAnalysisForSelectedNode = useBreachPathStore(
     (state) => state.runAnalysisForSelectedNode
   )
@@ -70,6 +82,9 @@ export function BreachPathBuilderPanel() {
   const [nodeHasAdminPrivileges, setNodeHasAdminPrivileges] = useState(false)
   const [nodeNotes, setNodeNotes] = useState('')
   const [exampleNetworkId, setExampleNetworkId] = useState('basic-home-network')
+  const [networkId, setNetworkId] = useState('home_network')
+  const [networkName, setNetworkName] = useState('My Home Network')
+  const [commitMessage, setCommitMessage] = useState('Saved network update')
   const [sourceCanvasId, setSourceCanvasId] = useState('')
   const [targetCanvasId, setTargetCanvasId] = useState('')
   const [edgeType, setEdgeType] = useState('can_access')
@@ -101,6 +116,17 @@ export function BreachPathBuilderPanel() {
       })),
     [canvasNodes]
   )
+  const graphPayload = useMemo(
+    () => buildGraphPayload(canvasNodes, canvasEdges),
+    [canvasNodes, canvasEdges]
+  )
+  const graphHash = useMemo(() => graphFingerprint(graphPayload), [graphPayload])
+  const isAnalysisOutdated =
+    lastAnalysisGraphHash !== undefined && currentGraphHash !== lastAnalysisGraphHash
+
+  useEffect(() => {
+    setCurrentGraphHash(graphHash)
+  }, [graphHash, setCurrentGraphHash])
 
   const sourceNode = useMemo(
     () => graphNodes.find((node) => String(node.canvasId) === sourceCanvasId),
@@ -191,22 +217,50 @@ export function BreachPathBuilderPanel() {
     setStatusMessage(`Connected ${source.graphNode.label} to ${target.graphNode.label}.`)
   }
 
-  const currentGraph = () => buildGraphPayload(canvasNodes, canvasEdges)
+  const currentGraph = () => graphPayload
 
   const runSelectedAnalysis = async () => {
     if (!selectedNode) {
       setStatusMessage('Select a device on the canvas first.')
-      await runAnalysisForSelectedNode(currentGraph())
+      await runAnalysisForSelectedNode(currentGraph(), graphHash)
       return
     }
 
     setStatusMessage(`Running analysis for ${selectedNode.label}.`)
-    const didRun = await runAnalysisForSelectedNode(currentGraph())
+    const didRun = await runAnalysisForSelectedNode(currentGraph(), graphHash)
     setStatusMessage(
       didRun
         ? `Analysis complete for ${selectedNode.label}.`
         : 'Analysis failed. Check that the backend is running at http://localhost:8000.'
     )
+  }
+
+  const saveToBackend = async () => {
+    try {
+      const response = await saveBreachPathNetwork({
+        networkId,
+        name: networkName,
+        graph: currentGraph(),
+        message: commitMessage,
+      })
+      const warning = response.warning ? ` ${response.warning}` : ''
+      setStatusMessage(
+        `Saved ${response.name} v${response.version} (${response.storage_backend}).${warning}`
+      )
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Could not save network.')
+    }
+  }
+
+  const loadFromBackend = async () => {
+    try {
+      const saved = await loadBreachPathNetwork(networkId)
+      loadGraph(saved.graph)
+      setNetworkName(saved.name)
+      setStatusMessage(`Loaded ${saved.name} v${saved.version} from backend.`)
+    } catch (error) {
+      setStatusMessage(error instanceof Error ? error.message : 'Could not load network.')
+    }
   }
 
   const loadGraph = (graph: BreachPathGraphPayload) => {
@@ -331,6 +385,40 @@ export function BreachPathBuilderPanel() {
           >
             Import JSON
           </button>
+        </section>
+
+        <section className="rounded border border-violet-700/70 bg-violet-950/20 p-3">
+          <h3 className="font-semibold text-content-primary">Save to backend / TuringDB</h3>
+          <p className="mt-1 text-xs text-content-secondary">
+            Saves a versioned network record. TuringDB write is attempted when available; local
+            history remains the safe fallback.
+          </p>
+          <label className="mt-3 block text-xs text-content-secondary">Network ID</label>
+          <input
+            className="app-input mt-1 w-full"
+            value={networkId}
+            onChange={(event) => setNetworkId(event.target.value)}
+          />
+          <label className="mt-2 block text-xs text-content-secondary">Network name</label>
+          <input
+            className="app-input mt-1 w-full"
+            value={networkName}
+            onChange={(event) => setNetworkName(event.target.value)}
+          />
+          <label className="mt-2 block text-xs text-content-secondary">Commit message</label>
+          <input
+            className="app-input mt-1 w-full"
+            value={commitMessage}
+            onChange={(event) => setCommitMessage(event.target.value)}
+          />
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button className="app-button" type="button" onClick={saveToBackend}>
+              Save network
+            </button>
+            <button className="app-button" type="button" onClick={loadFromBackend}>
+              Load network
+            </button>
+          </div>
         </section>
 
         <section className="rounded border border-cyan-700/70 bg-cyan-950/20 p-3">
@@ -555,6 +643,26 @@ export function BreachPathBuilderPanel() {
             Select a suspected compromised node on the canvas, then run analysis against the
             current graph.
           </p>
+          <label className="mt-3 block text-xs text-content-secondary">Simulation type</label>
+          <select
+            className="app-input mt-1 w-full"
+            value={simulationType}
+            onChange={(event) => setSimulationType(event.target.value as BreachPathSimulationType)}
+          >
+            <option value="compromise">Compromise</option>
+            <option value="offline">Offline / destroyed</option>
+            <option value="spyware">Spyware</option>
+            <option value="data_leak">Data leak</option>
+            <option value="lateral_movement">Lateral movement</option>
+          </select>
+          <p className="mt-2 rounded border border-grey-600 bg-grey-950/50 p-2 text-xs text-content-secondary">
+            Current version: v{currentGraphVersion} ({currentGraphHash ?? graphHash})
+          </p>
+          {isAnalysisOutdated && (
+            <p className="mt-2 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-xs text-yellow-100">
+              Network changed. Previous exposure analysis may be outdated. Re-run analysis.
+            </p>
+          )}
           {selectedNode ? (
             <p className="mt-2 rounded border border-emerald-700/60 bg-emerald-950/30 p-2 text-xs text-emerald-100">
               Selected: {selectedNode.label}

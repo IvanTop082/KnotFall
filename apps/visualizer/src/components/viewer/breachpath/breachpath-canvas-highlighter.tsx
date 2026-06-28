@@ -3,13 +3,17 @@ import type { BreachPathGraphEdge } from '@/breachpath/graph-utils'
 import { useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { getBreachPathNodeId } from '@/utils/breachpath-node-id'
 import { useTuringContext } from '@turingcanvas'
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const SELECTED_NODE_COLOR = 0xef4444
-const AFFECTED_NODE_COLOR = 0xf59e0b
-const CRITICAL_NODE_COLOR = 0x22d3ee
-const AFFECTED_EDGE_COLOR = 0xf97316
+const DEFAULT_AFFECTED_NODE_COLOR = 0xf59e0b
 const RELATED_EDGE_COLOR = 0xfbbf24
+const SEVERITY_COLORS: Record<string, number> = {
+  low: 0x60a5fa,
+  medium: 0xf59e0b,
+  high: 0xf97316,
+  critical: 0xc084fc,
+}
 
 function edgeKey(source: string | undefined, target: string | undefined) {
   return source && target ? `${source}->${target}` : undefined
@@ -32,6 +36,17 @@ export function BreachPathCanvasHighlighter() {
   const entityCache = useVisStore((state) => state.entityCache)
   const canvasNodes = useCanvasStore((state) => state.nodes())
   const canvasEdges = useCanvasStore((state) => state.edges())
+  const [pulseOn, setPulseOn] = useState(false)
+
+  useEffect(() => {
+    if (!analysis) {
+      setPulseOn(false)
+      return
+    }
+
+    const interval = window.setInterval(() => setPulseOn((value) => !value), 650)
+    return () => window.clearInterval(interval)
+  }, [analysis])
 
   const highlightedNodes = useMemo(
     () => new Set(analysis?.highlighted_nodes ?? []),
@@ -53,6 +68,16 @@ export function BreachPathCanvasHighlighter() {
     [analysis?.highlighted_edges]
   )
 
+  const edgeSeverity = useMemo(() => {
+    const severity = new Map<string, string>()
+    for (const [key, value] of Object.entries(analysis?.visual_severity_by_edge ?? {})) {
+      severity.set(key, value)
+      const [source, target] = key.split('->')
+      if (source && target) severity.set(`${target}->${source}`, value)
+    }
+    return severity
+  }, [analysis?.visual_severity_by_edge])
+
   useEffect(() => {
     const nodeIdByCanvasId = new Map<number, string>()
 
@@ -69,6 +94,10 @@ export function BreachPathCanvasHighlighter() {
         (selectedNode.canvasNodeId === node.id || selectedNode.breachPathNodeId === breachPathId)
       const isHighlighted = breachPathId !== undefined && highlightedNodes.has(breachPathId)
       const isCritical = breachPathId !== undefined && criticalTargets.has(breachPathId)
+      const severity = breachPathId
+        ? analysis?.visual_severity_by_node?.[breachPathId]
+        : undefined
+      const severityColor = severity ? SEVERITY_COLORS[severity] : undefined
 
       if (!selectedNode) {
         turing.instance.resetNodeColor(node)
@@ -80,10 +109,10 @@ export function BreachPathCanvasHighlighter() {
         turing.instance.setNodeColor(node, SELECTED_NODE_COLOR)
         turing.instance.setNodeOpacity(node, 1)
       } else if (isCritical) {
-        turing.instance.setNodeColor(node, CRITICAL_NODE_COLOR)
+        turing.instance.setNodeColor(node, severityColor ?? SEVERITY_COLORS.critical)
         turing.instance.setNodeOpacity(node, 1)
       } else if (isHighlighted) {
-        turing.instance.setNodeColor(node, AFFECTED_NODE_COLOR)
+        turing.instance.setNodeColor(node, severityColor ?? DEFAULT_AFFECTED_NODE_COLOR)
         turing.instance.setNodeOpacity(node, 0.95)
       } else {
         turing.instance.resetNodeColor(node)
@@ -98,6 +127,8 @@ export function BreachPathCanvasHighlighter() {
       const isHighlighted = currentEdgeKey !== undefined && highlightedEdges.has(currentEdgeKey)
       const sourceHighlighted = sourceId !== undefined && highlightedNodes.has(sourceId)
       const targetHighlighted = targetId !== undefined && highlightedNodes.has(targetId)
+      const severity = currentEdgeKey ? edgeSeverity.get(currentEdgeKey) : undefined
+      const severityColor = severity ? SEVERITY_COLORS[severity] : undefined
 
       if (!selectedNode) {
         turing.instance.setEdgeColor(edge, undefined)
@@ -106,8 +137,8 @@ export function BreachPathCanvasHighlighter() {
       }
 
       if (isHighlighted) {
-        turing.instance.setEdgeColor(edge, AFFECTED_EDGE_COLOR)
-        turing.instance.setEdgeOpacity(edge, 1)
+        turing.instance.setEdgeColor(edge, severityColor ?? SEVERITY_COLORS.high)
+        turing.instance.setEdgeOpacity(edge, pulseOn ? 1 : 0.45)
       } else if (analysis && sourceHighlighted && targetHighlighted) {
         turing.instance.setEdgeColor(edge, RELATED_EDGE_COLOR)
         turing.instance.setEdgeOpacity(edge, 0.65)
@@ -124,8 +155,10 @@ export function BreachPathCanvasHighlighter() {
     entityCache,
     highlightedEdges,
     highlightedNodes,
+    pulseOn,
     selectedNode,
     turing,
+    edgeSeverity,
   ])
 
   return null

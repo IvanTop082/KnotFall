@@ -3,6 +3,7 @@ import {
   getCompromisedNodeAnalysis,
   type BreachPathCompromisedNodeAnalysis,
   type BreachPathGraphPayload,
+  type BreachPathSimulationType,
   postCompromisedNodeAnalysis,
 } from '@/api/breachpath'
 import {
@@ -27,13 +28,27 @@ export type BreachPathStore = {
   analysis: BreachPathCompromisedNodeAnalysis | undefined
   status: BreachPathAnalysisStatus
   error: string | undefined
+  simulationType: BreachPathSimulationType
+  currentGraphHash: string | undefined
+  lastAnalysisGraphHash: string | undefined
+  currentGraphVersion: number
+  lastAnalysisGraphVersion: number | undefined
+  lastAnalysisSimulationType: BreachPathSimulationType | undefined
   selectNodeForAnalysis: (node: NodeEntry | undefined, canvasNodeId: number) => void
+  setSimulationType: (simulationType: BreachPathSimulationType) => void
+  setCurrentGraphHash: (graphHash: string) => void
   runAnalysisForNode: (
     node: NodeEntry | undefined,
     canvasNodeId: number,
-    graph?: BreachPathGraphPayload
+    graph?: BreachPathGraphPayload,
+    graphHash?: string,
+    simulationType?: BreachPathSimulationType
   ) => Promise<boolean>
-  runAnalysisForSelectedNode: (graph?: BreachPathGraphPayload) => Promise<boolean>
+  runAnalysisForSelectedNode: (
+    graph?: BreachPathGraphPayload,
+    graphHash?: string,
+    simulationType?: BreachPathSimulationType
+  ) => Promise<boolean>
   clearAnalysis: () => void
 }
 
@@ -42,6 +57,22 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
   analysis: undefined,
   status: 'idle',
   error: undefined,
+  simulationType: 'compromise',
+  currentGraphHash: undefined,
+  lastAnalysisGraphHash: undefined,
+  currentGraphVersion: 0,
+  lastAnalysisGraphVersion: undefined,
+  lastAnalysisSimulationType: undefined,
+  setSimulationType: (simulationType) => set({ simulationType }),
+  setCurrentGraphHash: (graphHash) =>
+    set((state) => {
+      if (state.currentGraphHash === graphHash) return state
+
+      return {
+        currentGraphHash: graphHash,
+        currentGraphVersion: state.currentGraphVersion + 1,
+      }
+    }),
   selectNodeForAnalysis: (node, canvasNodeId) => {
     const nodeIdResult = getBreachPathNodeId(node)
     const selectedNode =
@@ -72,12 +103,13 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
       error: undefined,
     })
   },
-  runAnalysisForNode: async (node, canvasNodeId, graph) => {
+  runAnalysisForNode: async (node, canvasNodeId, graph, graphHash, simulationType) => {
     get().selectNodeForAnalysis(node, canvasNodeId)
-    return get().runAnalysisForSelectedNode(graph)
+    return get().runAnalysisForSelectedNode(graph, graphHash, simulationType)
   },
-  runAnalysisForSelectedNode: async (graph) => {
+  runAnalysisForSelectedNode: async (graph, graphHash, simulationType) => {
     const selectedNode = get().selectedNode
+    const selectedSimulationType = simulationType ?? get().simulationType
 
     if (!selectedNode) {
       set({
@@ -93,11 +125,16 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
       analysis: undefined,
       status: 'loading',
       error: undefined,
+      simulationType: selectedSimulationType,
     })
 
     try {
       const analysis = graph
-        ? await postCompromisedNodeAnalysis(selectedNode.breachPathNodeId, graph)
+        ? await postCompromisedNodeAnalysis(
+            selectedNode.breachPathNodeId,
+            graph,
+            selectedSimulationType
+          )
         : await getCompromisedNodeAnalysis(selectedNode.breachPathNodeId)
       const currentSelectedNode = get().selectedNode
 
@@ -112,6 +149,9 @@ export const useBreachPathStore = create<BreachPathStore>((set, get) => ({
         analysis,
         status: 'ready',
         error: undefined,
+        lastAnalysisGraphHash: graphHash ?? get().currentGraphHash,
+        lastAnalysisGraphVersion: get().currentGraphVersion,
+        lastAnalysisSimulationType: selectedSimulationType,
       })
       return true
     } catch (error) {

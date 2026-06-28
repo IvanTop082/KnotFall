@@ -3,6 +3,9 @@ from typing import Any
 from pydantic import BaseModel
 
 
+SimulationType = str
+
+
 class NodeSummary(BaseModel):
     id: str
     label: str
@@ -120,11 +123,18 @@ class AnalysisRecommendation(BaseModel):
 
 class CompromisedNodeAnalysisResponse(BaseModel):
     compromised_node: AnalysisCompromisedNode
+    simulation_type: SimulationType = "compromise"
     summary: AnalysisSummary
+    risk_score: int = 0
+    risk_level: str = "none"
     highlighted_nodes: list[str]
     highlighted_edges: list[AnalysisEdgeRef]
     paths: list[AnalysisPath]
     recommendations: list[AnalysisRecommendation]
+    explanation: str = ""
+    followed_edge_types: list[str] = []
+    visual_severity_by_node: dict[str, str] = {}
+    visual_severity_by_edge: dict[str, str] = {}
     defensive_note: str
 
 
@@ -136,8 +146,55 @@ class AnalysisGraphPayload(BaseModel):
 
 class CompromisedNodeAnalysisRequest(BaseModel):
     node_id: str
+    simulation_type: SimulationType = "compromise"
     graph: AnalysisGraphPayload
 
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class NetworkSaveRequest(BaseModel):
+    network_id: str
+    name: str
+    graph: AnalysisGraphPayload
+    message: str = "Saved network"
+
+
+class NetworkSaveResponse(BaseModel):
+    network_id: str
+    name: str
+    commit_id: str
+    version: int
+    status: str
+    storage_backend: str = "local_history_fallback"
+    warning: str | None = None
+
+
+class NetworkSummary(BaseModel):
+    network_id: str
+    name: str
+    version: int
+    updated_at: str
+    node_count: int
+    edge_count: int
+    storage_backend: str = "local_history_fallback"
+
+
+class NetworkCommitSummary(BaseModel):
+    commit_id: str
+    version: int
+    message: str
+    created_at: str
+    node_count: int
+    edge_count: int
+
+
+class SavedNetworkResponse(BaseModel):
+    network_id: str
+    name: str
+    graph: dict[str, Any]
+    version: int
+    commit_id: str
+    updated_at: str
+    storage_backend: str = "local_history_fallback"

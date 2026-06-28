@@ -1,5 +1,5 @@
 import TuringButton from '@/components/base/turing-button'
-import { buildGraphPayload } from '@/breachpath/graph-utils'
+import { buildGraphPayload, graphFingerprint } from '@/breachpath/graph-utils'
 import { useBreachPathBuilderStore, useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { CenterForceSwitch } from './actions/center-force-switch'
 import { NodeShapeSwitch } from './actions/node-shape-switch'
@@ -25,6 +25,8 @@ export const TuringTopToolBar = () => {
       ? nodeInspectorExtendedWidth
       : nodeInspectorCollapsedWidth
     : 0
+  const currentGraph = buildGraphPayload(canvasNodes, canvasEdges)
+  const currentGraphHash = graphFingerprint(currentGraph)
 
   return (
     <div
@@ -47,7 +49,7 @@ export const TuringTopToolBar = () => {
           intent="success"
           disabled={!selectedNode || analysisStatus === 'loading'}
           loading={analysisStatus === 'loading'}
-          onClick={() => runAnalysisForSelectedNode(buildGraphPayload(canvasNodes, canvasEdges))}
+          onClick={() => runAnalysisForSelectedNode(currentGraph, currentGraphHash)}
         >
           Analyse selected
         </TuringButton>

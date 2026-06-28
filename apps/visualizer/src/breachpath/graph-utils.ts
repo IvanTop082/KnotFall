@@ -253,3 +253,18 @@ export function downloadGraph(graph: BreachPathGraphPayload) {
   link.click()
   URL.revokeObjectURL(url)
 }
+
+export function graphFingerprint(graph: BreachPathGraphPayload) {
+  const stableGraph = {
+    nodes: [...graph.nodes].sort((first, second) => first.id.localeCompare(second.id)),
+    edges: [...graph.edges].sort((first, second) => first.id.localeCompare(second.id)),
+  }
+  const payload = JSON.stringify(stableGraph)
+  let hash = 0
+
+  for (let index = 0; index < payload.length; index += 1) {
+    hash = (hash * 31 + payload.charCodeAt(index)) >>> 0
+  }
+
+  return hash.toString(16).padStart(8, '0')
+}

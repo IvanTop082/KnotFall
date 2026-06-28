@@ -17,13 +17,19 @@ from .graph_loader import (
 )
 from .path_finder import LocalJSONPathFinder
 from .recommendations import LocalRecommendationEngine
+from .repositories.network_repository import get_network_repository
 from .schemas import (
     AttackPathResponse,
     CompromisedNodeAnalysisRequest,
     CompromisedNodeAnalysisResponse,
     ErrorResponse,
+    NetworkCommitSummary,
+    NetworkSaveRequest,
+    NetworkSaveResponse,
+    NetworkSummary,
     GraphResponse,
     RecommendationResponse,
+    SavedNetworkResponse,
 )
 
 
@@ -40,6 +46,11 @@ app.add_middleware(
         "http://localhost:3001",
         "http://localhost:5173",
     ],
+    allow_origin_regex=(
+        r"^http://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|"
+        r"172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+|"
+        r"192\.168\.\d+\.\d+)(:\d+)?$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -82,6 +93,48 @@ EDGE_RISK_SCORES = {
     "low": 25,
     "medium": 55,
     "high": 85,
+}
+
+SIMULATION_RULES = {
+    "compromise": {
+        "label": "Compromise",
+        "follow": {
+            "same_network",
+            "can_access",
+            "routes_through",
+            "administers",
+            "stores_credentials_for",
+            "controls",
+            "internet_exposes",
+        },
+        "bidirectional": {"same_network", "can_access", "routes_through"},
+    },
+    "offline": {
+        "label": "Offline / destroyed",
+        "follow": {"depends_on", "routes_through", "backs_up", "monitors"},
+        "bidirectional": {"routes_through"},
+    },
+    "spyware": {
+        "label": "Spyware",
+        "follow": {"same_network", "can_access", "monitors", "stores_credentials_for"},
+        "bidirectional": {"same_network", "can_access"},
+    },
+    "data_leak": {
+        "label": "Data leak",
+        "follow": {"can_access", "stores_credentials_for"},
+        "bidirectional": set(),
+    },
+    "lateral_movement": {
+        "label": "Lateral movement",
+        "follow": {
+            "can_access",
+            "administers",
+            "controls",
+            "stores_credentials_for",
+            "routes_through",
+        },
+        "bidirectional": {"can_access", "routes_through"},
+    },
 }
 
 
@@ -131,6 +184,51 @@ def get_graph():
         "nodes": graph["nodes"],
         "edges": graph["edges"],
     }
+
+
+@app.post("/networks/save", response_model=NetworkSaveResponse)
+def save_network(request: NetworkSaveRequest):
+    repository = get_network_repository(TURINGDB_HOST)
+    result = repository.save_network(
+        network_id=request.network_id,
+        name=request.name,
+        graph=request.graph.dict(),
+        message=request.message,
+    )
+
+    return {
+        "network_id": result.network_id,
+        "name": result.name,
+        "commit_id": result.commit_id,
+        "version": result.version,
+        "status": result.status,
+        "storage_backend": result.storage_backend,
+        "warning": result.warning,
+    }
+
+
+@app.get("/networks", response_model=list[NetworkSummary])
+def list_saved_networks():
+    repository = get_network_repository(TURINGDB_HOST)
+    return repository.list_networks()
+
+
+@app.get("/networks/{network_id}", response_model=SavedNetworkResponse)
+def get_saved_network(network_id: str):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        return repository.get_network(network_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get("/networks/{network_id}/history", response_model=list[NetworkCommitSummary])
+def get_saved_network_history(network_id: str):
+    repository = get_network_repository(TURINGDB_HOST)
+    try:
+        return repository.get_history(network_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get(
@@ -235,6 +333,7 @@ def get_compromised_node_analysis(
         compromised_node_id=node_id,
         paths=paths,
         recommendations=recommendations,
+        simulation_type="compromise",
     )
 
 
@@ -248,8 +347,10 @@ def analyse_compromised_node_from_graph(
     max_depth: int = Query(DEFAULT_MAX_DEPTH, ge=1, le=20),
     max_paths_per_asset: int = Query(DEFAULT_MAX_PATHS_PER_ASSET, ge=1, le=20),
 ):
+    simulation_type = _normalise_simulation_type(request.simulation_type)
+
     try:
-        graph = _normalise_analysis_graph(request.graph.dict())
+        graph = _normalise_analysis_graph(request.graph.dict(), simulation_type)
     except GraphDataError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -271,6 +372,7 @@ def analyse_compromised_node_from_graph(
         reachable_edges=reachable["edges"],
         graph=graph,
         compromised_node_id=request.node_id,
+        simulation_type=simulation_type,
     )
 
     return _build_compromised_node_analysis(
@@ -278,6 +380,7 @@ def analyse_compromised_node_from_graph(
         compromised_node_id=request.node_id,
         paths=paths,
         recommendations=recommendations,
+        simulation_type=simulation_type,
         highlighted_nodes=reachable["nodes"],
         highlighted_edges=reachable["edges"],
     )
@@ -316,6 +419,7 @@ def _build_compromised_node_analysis(
     compromised_node_id,
     paths,
     recommendations,
+    simulation_type="compromise",
     highlighted_nodes=None,
     highlighted_edges=None,
 ):
@@ -359,6 +463,24 @@ def _build_compromised_node_analysis(
     highest_risk_score = max((path["risk_score"] for path in paths), default=0)
     risk_level = _risk_level_from_score(highest_risk_score)
     critical_assets = {path["asset_id"] for path in paths}
+    followed_edge_types = sorted(
+        {
+            edge.get("relationship")
+            for edge in highlighted_edges
+            if edge.get("relationship")
+        }
+    )
+    visual_severity_by_node = _visual_severity_by_node(
+        graph=graph,
+        highlighted_nodes=highlighted_nodes,
+        critical_assets=critical_assets,
+        compromised_node_id=compromised_node_id,
+        risk_score=highest_risk_score,
+    )
+    visual_severity_by_edge = _visual_severity_by_edge(
+        highlighted_edges=highlighted_edges,
+        risk_score=highest_risk_score,
+    )
 
     return {
         "compromised_node": {
@@ -366,6 +488,7 @@ def _build_compromised_node_analysis(
             "label": compromised_node["label"],
             "type": compromised_node["type"],
         },
+        "simulation_type": simulation_type,
         "summary": {
             "affected_node_count": len(highlighted_nodes),
             "affected_edge_count": len(highlighted_edges),
@@ -373,6 +496,8 @@ def _build_compromised_node_analysis(
             "highest_risk_score": highest_risk_score,
             "risk_level": risk_level,
         },
+        "risk_score": highest_risk_score,
+        "risk_level": risk_level,
         "highlighted_nodes": highlighted_nodes,
         "highlighted_edges": highlighted_edges,
         "paths": analysis_paths,
@@ -386,6 +511,10 @@ def _build_compromised_node_analysis(
             }
             for recommendation in recommendations[:5]
         ],
+        "explanation": _simulation_explanation(simulation_type, compromised_node, followed_edge_types),
+        "followed_edge_types": followed_edge_types,
+        "visual_severity_by_node": visual_severity_by_node,
+        "visual_severity_by_edge": visual_severity_by_edge,
         "defensive_note": (
             "This is a defensive exposure simulation. It does not perform "
             "exploitation or scanning."
@@ -415,7 +544,67 @@ def _risk_level_from_score(score):
     return "high"
 
 
-def _normalise_analysis_graph(graph_payload):
+def _normalise_simulation_type(simulation_type):
+    normalised = str(simulation_type or "compromise").strip().lower()
+    return normalised if normalised in SIMULATION_RULES else "compromise"
+
+
+def _visual_severity_from_score(score):
+    if score >= 90:
+        return "critical"
+    if score >= 70:
+        return "high"
+    if score >= 40:
+        return "medium"
+    if score > 0:
+        return "low"
+    return "low"
+
+
+def _visual_severity_by_node(
+    graph,
+    highlighted_nodes,
+    critical_assets,
+    compromised_node_id,
+    risk_score,
+):
+    severity = {}
+    base_severity = _visual_severity_from_score(risk_score)
+
+    for node_id in highlighted_nodes:
+        node = graph["node_lookup"].get(node_id, {})
+        if node_id == compromised_node_id:
+            severity[node_id] = "critical"
+        elif node_id in critical_assets or int(node.get("criticality", 0)) >= 90:
+            severity[node_id] = "critical"
+        elif int(node.get("criticality", 0)) >= 85:
+            severity[node_id] = "high"
+        else:
+            severity[node_id] = base_severity if base_severity != "critical" else "high"
+
+    return severity
+
+
+def _visual_severity_by_edge(highlighted_edges, risk_score):
+    severity = _visual_severity_from_score(risk_score)
+    return {
+        f"{edge['source']}->{edge['target']}": severity
+        for edge in highlighted_edges
+    }
+
+
+def _simulation_explanation(simulation_type, compromised_node, followed_edge_types):
+    label = SIMULATION_RULES[simulation_type]["label"]
+    followed = ", ".join(followed_edge_types) if followed_edge_types else "no relationships"
+    return (
+        f"{label} simulation for {compromised_node['label']}. "
+        f"BreachPath followed {followed} to estimate defensive exposure. "
+        "This is a safe model only; it does not scan, exploit, or execute payloads."
+    )
+
+
+def _normalise_analysis_graph(graph_payload, simulation_type="compromise"):
+    rules = SIMULATION_RULES[_normalise_simulation_type(simulation_type)]
     nodes = [_normalise_analysis_node(node) for node in graph_payload.get("nodes", [])]
     node_ids = {node["id"] for node in nodes}
     edges = []
@@ -424,14 +613,13 @@ def _normalise_analysis_graph(graph_payload):
         normalised_edge = _normalise_analysis_edge(edge)
         if normalised_edge["source"] not in node_ids or normalised_edge["target"] not in node_ids:
             continue
-        if normalised_edge["relationship"] not in COMPROMISE_RELATIONSHIPS:
+        if normalised_edge["relationship"] not in rules["follow"]:
             continue
         edges.append(normalised_edge)
 
         if (
             normalised_edge.get("direction") == "bidirectional"
-            or normalised_edge.get("risk_can_spread_both_ways")
-            or normalised_edge["relationship"] in COMPROMISE_BIDIRECTIONAL_RELATIONSHIPS
+            or normalised_edge["relationship"] in rules["bidirectional"]
         ):
             reverse_edge = {
                 **normalised_edge,
@@ -521,7 +709,7 @@ def _normalise_analysis_edge(edge):
     )
     risk_weight = _normalise_edge_risk(edge.get("risk_weight"))
 
-    if relationship == "same_network" or risk_can_spread_both_ways:
+    if relationship == "same_network":
         direction = "bidirectional"
     elif not direction:
         direction = "source_to_target"
@@ -595,7 +783,13 @@ def _find_reachable_exposure(graph, compromised_node_id, max_depth):
     }
 
 
-def _build_current_graph_recommendations(paths, reachable_edges, graph, compromised_node_id):
+def _build_current_graph_recommendations(
+    paths,
+    reachable_edges,
+    graph,
+    compromised_node_id,
+    simulation_type="compromise",
+):
     recommendations = []
     relationships = {
         (edge["source"], edge["target"], edge.get("relationship"))
@@ -642,6 +836,88 @@ def _build_current_graph_recommendations(paths, reachable_edges, graph, compromi
         return any(needle in searchable for needle in needles)
 
     router_in_scope = any(node_matches(node_id, "router") for node_id in scope_nodes)
+
+    if simulation_type == "spyware":
+        add_recommendation(
+            "Isolate the suspected spyware device.",
+            "isolate_node",
+            "strong",
+            80,
+            "Disconnect or isolate the device while checking what accounts, files, and nearby devices it could observe.",
+        )
+        add_recommendation(
+            "Rotate passwords used on or near this device.",
+            "rotate_credentials",
+            "strong",
+            70,
+            "Spyware can expose credentials, sessions, and sensitive prompts. Rotate passwords and review sign-ins.",
+        )
+        add_recommendation(
+            "Check sensitive accounts and data access.",
+            "review_access",
+            "useful",
+            55,
+            "Review accounts, cloud sessions, shared folders, and sensitive data reachable from this device.",
+        )
+    elif simulation_type == "data_leak":
+        add_recommendation(
+            "Revoke unnecessary data access.",
+            "revoke_access",
+            "strong",
+            75,
+            "Limit what this device can read from shared folders, cloud accounts, NAS, servers, and databases.",
+        )
+        add_recommendation(
+            "Rotate credentials and sessions.",
+            "rotate_credentials",
+            "strong",
+            70,
+            "A data leak can expose stored passwords, access tokens, and active sessions.",
+        )
+        add_recommendation(
+            "Review shared folders and cloud access.",
+            "review_access",
+            "useful",
+            55,
+            "Check whether accessible folders, accounts, or cloud services are broader than necessary.",
+        )
+    elif simulation_type == "lateral_movement":
+        add_recommendation(
+            "Restrict admin access on reachable paths.",
+            "restrict_admin_access",
+            "strong",
+            80,
+            "Privilege and control paths should be narrowed so one device cannot become a stepping stone.",
+        )
+        add_recommendation(
+            "Rotate stored credentials on path chokepoints.",
+            "remove_stored_credentials",
+            "strong",
+            75,
+            "Stored credentials can turn ordinary reachability into privileged movement.",
+        )
+        add_recommendation(
+            "Isolate path chokepoints.",
+            "segment_network",
+            "strong",
+            70,
+            "Segment routers, VPN gateways, file servers, and identity systems that connect many paths.",
+        )
+    elif simulation_type == "offline":
+        add_recommendation(
+            "Review dependencies on the offline device.",
+            "improve_resilience",
+            "strong",
+            70,
+            "Devices and services that depend on this node may need backup routing, redundancy, or a manual workaround.",
+        )
+        add_recommendation(
+            "Check backup and monitoring coverage.",
+            "improve_monitoring",
+            "useful",
+            45,
+            "Availability scenarios should confirm that backups and monitoring still work when this device is unavailable.",
+        )
 
     if router_in_scope:
         add_recommendation(

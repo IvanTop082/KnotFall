@@ -32,6 +32,7 @@ import {
   createNodeEntryFromGraphNode,
   createNodeEntryFromTemplate,
   downloadGraph,
+  edgeToGraphEdge,
   graphFingerprint,
   nextCanvasId,
   nextEdgeId,
@@ -79,6 +80,8 @@ export function BreachPathBuilderPanel() {
   const selectedNode = useBreachPathStore((state) => state.selectedNode)
   const simulationType = useBreachPathStore((state) => state.simulationType)
   const hasUnsavedChanges = useBreachPathStore((state) => state.hasUnsavedChanges)
+  const savedNetworkId = useBreachPathStore((state) => state.savedNetworkId)
+  const savedNetworkName = useBreachPathStore((state) => state.savedNetworkName)
   const savedNetworkVersion = useBreachPathStore((state) => state.savedNetworkVersion)
   const previewVersion = useBreachPathStore((state) => state.previewVersion)
   const setSavedNetworkVersion = useBreachPathStore((state) => state.setSavedNetworkVersion)
@@ -102,6 +105,7 @@ export function BreachPathBuilderPanel() {
   const setLocalBuilderMode = useBreachPathBuilderStore((state) => state.setLocalBuilderMode)
   const statusMessage = useBreachPathBuilderStore((state) => state.statusMessage)
   const setStatusMessage = useBreachPathBuilderStore((state) => state.setStatusMessage)
+  const libraryRefreshToken = useBreachPathBuilderStore((state) => state.libraryRefreshToken)
 
   const [templateId, setTemplateId] = useState('laptop')
   const [nodeLabel, setNodeLabel] = useState('')
@@ -125,6 +129,7 @@ export function BreachPathBuilderPanel() {
   const [backendNetworkCount, setBackendNetworkCount] = useState<number | undefined>()
   const [sourceCanvasId, setSourceCanvasId] = useState('')
   const [targetCanvasId, setTargetCanvasId] = useState('')
+  const [deleteEdgeCanvasId, setDeleteEdgeCanvasId] = useState('')
   const [edgeType, setEdgeType] = useState('can_access')
   const [edgeDirection, setEdgeDirection] = useState(defaultDirectionForEdge('can_access'))
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -173,6 +178,25 @@ export function BreachPathBuilderPanel() {
       })),
     [canvasNodes]
   )
+  const nodeLabelByGraphId = useMemo(
+    () => new Map(graphNodes.map((node) => [node.graphNode.id, node.graphNode.label])),
+    [graphNodes]
+  )
+  const graphEdges = useMemo(
+    () =>
+      canvasEdges.map((edge) => {
+        const graphEdge = edgeToGraphEdge(edge)
+        const sourceLabel = nodeLabelByGraphId.get(graphEdge.source) ?? graphEdge.source
+        const targetLabel = nodeLabelByGraphId.get(graphEdge.target) ?? graphEdge.target
+
+        return {
+          canvasId: edge.id,
+          graphEdge,
+          label: `${shorten(sourceLabel, 18)} -> ${shorten(targetLabel, 18)} (${graphEdge.edge_type})`,
+        }
+      }),
+    [canvasEdges, nodeLabelByGraphId]
+  )
   const graphPayload = useMemo(
     () => buildGraphPayload(canvasNodes, canvasEdges),
     [canvasNodes, canvasEdges]
@@ -195,6 +219,16 @@ export function BreachPathBuilderPanel() {
   useEffect(() => {
     setNetworkNameInStore(networkName)
   }, [networkName, setNetworkNameInStore])
+
+  useEffect(() => {
+    if (savedNetworkId && savedNetworkId !== networkId) {
+      setNetworkId(savedNetworkId)
+    }
+
+    if (savedNetworkName && savedNetworkName !== networkName) {
+      setNetworkName(savedNetworkName)
+    }
+  }, [networkId, networkName, savedNetworkId, savedNetworkName])
 
   const refreshNetworkLibrary = async () => {
     if (!storageConnected) {
@@ -222,6 +256,18 @@ export function BreachPathBuilderPanel() {
   useEffect(() => {
     refreshNetworkLibrary().catch(() => undefined)
   }, [storageConnected])
+
+  useEffect(() => {
+    if (!libraryRefreshToken || !storageConnected) return
+
+    const targetNetworkId = savedNetworkId ?? networkId
+    refreshNetworkLibrary().catch(() => undefined)
+    refreshVersionHistory(targetNetworkId, false).catch((error) => {
+      setStatusMessage(
+        error instanceof Error ? error.message : 'Could not refresh saved versions.'
+      )
+    })
+  }, [libraryRefreshToken, networkId, savedNetworkId, setStatusMessage, storageConnected])
 
   useEffect(() => {
     let cancelled = false
@@ -259,6 +305,10 @@ export function BreachPathBuilderPanel() {
   const targetNode = useMemo(
     () => graphNodes.find((node) => String(node.canvasId) === targetCanvasId),
     [graphNodes, targetCanvasId]
+  )
+  const edgeToDelete = useMemo(
+    () => graphEdges.find((edge) => String(edge.canvasId) === deleteEdgeCanvasId),
+    [deleteEdgeCanvasId, graphEdges]
   )
 
   const suggestedEdgeTypes = useMemo(() => {
@@ -402,6 +452,83 @@ export function BreachPathBuilderPanel() {
     setStatusMessage(`Connected ${source.graphNode.label} to ${target.graphNode.label}.`)
   }
 
+  const deleteCanvasEdge = (edgeId: number) => {
+    const edge = turing.instance.edgeMap.get(edgeId)
+    if (!edge) return false
+
+    turing.instance.delEdge(edgeId)
+    entityCache.edges.delete(edgeId)
+    resetCanvasStates('edges', 'edgeMap')
+    return true
+  }
+
+  const deleteSelectedNode = () => {
+    if (isReadOnlyPreview) {
+      setStatusMessage('Restore this version or load the latest version before editing.')
+      return
+    }
+
+    if (!selectedNode) {
+      setStatusMessage('Select a node on the canvas before deleting.')
+      return
+    }
+
+    const canvasNode = turing.instance.nodeMap.get(selectedNode.canvasNodeId)
+    if (!canvasNode) {
+      setStatusMessage('Selected node was not found on the canvas.')
+      return
+    }
+
+    const connectedEdges = canvasEdges.filter(
+      (edge) =>
+        edge.source.id === selectedNode.canvasNodeId ||
+        edge.target.id === selectedNode.canvasNodeId
+    )
+    const confirmed = window.confirm(
+      `Delete ${selectedNode.label} and ${connectedEdges.length} connected connection(s)?`
+    )
+    if (!confirmed) return
+
+    enterLocalMode()
+    clearAnalysis()
+    canvasActions.unselectAll()
+    connectedEdges.forEach((edge) => deleteCanvasEdge(edge.id))
+    turing.instance.delNode(selectedNode.canvasNodeId)
+    entityCache.nodes.delete(selectedNode.canvasNodeId)
+    resetCanvasStates('nodes', 'nodeMap', 'selectedNodes', 'edges', 'edgeMap')
+
+    if (sourceCanvasId === String(selectedNode.canvasNodeId)) setSourceCanvasId('')
+    if (targetCanvasId === String(selectedNode.canvasNodeId)) setTargetCanvasId('')
+    setDeleteEdgeCanvasId('')
+    setStatusMessage(`Deleted ${selectedNode.label} and its connected relationships.`)
+  }
+
+  const deleteSelectedEdge = () => {
+    if (isReadOnlyPreview) {
+      setStatusMessage('Restore this version or load the latest version before editing.')
+      return
+    }
+
+    if (!edgeToDelete) {
+      setStatusMessage('Choose a connection to delete.')
+      return
+    }
+
+    const confirmed = window.confirm(`Delete connection ${edgeToDelete.label}?`)
+    if (!confirmed) return
+
+    enterLocalMode()
+    clearAnalysis()
+    const deleted = deleteCanvasEdge(edgeToDelete.canvasId)
+    if (!deleted) {
+      setStatusMessage('Selected connection was not found on the canvas.')
+      return
+    }
+
+    setDeleteEdgeCanvasId('')
+    setStatusMessage(`Deleted connection ${edgeToDelete.label}.`)
+  }
+
   const currentGraph = () => graphPayload
 
   const refreshVersionHistory = async (
@@ -460,10 +587,12 @@ export function BreachPathBuilderPanel() {
         commitMessage.trim() ||
         window.prompt('Version message', defaultMessage)?.trim() ||
         defaultMessage
+      const graph = currentGraph()
+      const savedGraphHash = graphFingerprint(graph)
       const response = await saveBreachPathNetworkVersionForNetwork({
         networkId: identity.networkId,
         name: identity.name,
-        graph: currentGraph(),
+        graph,
         message,
       })
 
@@ -474,7 +603,7 @@ export function BreachPathBuilderPanel() {
         response.network_id,
         response.version,
         response.name ?? identity.name,
-        undefined
+        savedGraphHash
       )
       setPreviewVersion(undefined)
       await refreshNetworkLibrary()
@@ -549,6 +678,7 @@ export function BreachPathBuilderPanel() {
     if (!confirmed) return
 
     try {
+      setStatusMessage(`Deleting ${label} from TuringDB-backed storage...`)
       await deleteBreachPathNetwork(targetNetworkId)
       await refreshNetworkLibrary()
       setVersionHistory([])
@@ -1123,6 +1253,17 @@ export function BreachPathBuilderPanel() {
               >
                 Update selected node
               </button>
+              <button
+                className="app-button mt-2 w-full border-red-700/70 text-red-100 hover:bg-red-950/50"
+                type="button"
+                disabled={isReadOnlyPreview}
+                onClick={deleteSelectedNode}
+              >
+                Delete selected node
+              </button>
+              <p className="mt-2 text-[11px] leading-4 text-content-secondary">
+                Deleting a node also removes every connected relationship from the canvas.
+              </p>
             </>
           ) : (
             <p className="mt-1 rounded border border-yellow-700/60 bg-yellow-950/30 p-2 text-xs text-yellow-100">
@@ -1338,6 +1479,34 @@ export function BreachPathBuilderPanel() {
           >
             Confirm typed edge
           </button>
+
+          <div className="mt-4 rounded border border-red-800/60 bg-red-950/20 p-2">
+            <h4 className="text-xs font-semibold text-red-100">Delete connection</h4>
+            <p className="mt-1 text-xs text-content-secondary">
+              Remove a relationship from the current canvas. Save a new version to persist it.
+            </p>
+            <select
+              className="app-input mt-2 w-full"
+              value={deleteEdgeCanvasId}
+              disabled={graphEdges.length === 0 || isReadOnlyPreview}
+              onChange={(event) => setDeleteEdgeCanvasId(event.target.value)}
+            >
+              <option value="">Choose connection</option>
+              {graphEdges.map((edge) => (
+                <option key={edge.canvasId} value={edge.canvasId}>
+                  {edge.label}
+                </option>
+              ))}
+            </select>
+            <button
+              className="app-button mt-2 w-full border-red-700/70 text-red-100 hover:bg-red-950/50"
+              type="button"
+              disabled={!edgeToDelete || isReadOnlyPreview}
+              onClick={deleteSelectedEdge}
+            >
+              Delete selected connection
+            </button>
+          </div>
         </section>
         </>
         )}

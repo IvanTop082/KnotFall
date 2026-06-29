@@ -10,6 +10,33 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
+NODE_SNAPSHOT_PROPERTIES = [
+    "label",
+    "type",
+    "node_type",
+    "template_type",
+    "criticality",
+    "zone",
+    "description",
+    "is_internet_exposed",
+    "has_admin_privileges",
+    "notes",
+]
+
+
+EDGE_SNAPSHOT_PROPERTIES = [
+    "id",
+    "edge_type",
+    "relationship",
+    "label",
+    "risk_weight",
+    "direction",
+    "risk_can_spread_both_ways",
+    "description",
+    "notes",
+]
+
+
 class TuringDBHttpError(RuntimeError):
     def __init__(self, message: str, *, error_code: str | None = None):
         super().__init__(message)
@@ -17,7 +44,7 @@ class TuringDBHttpError(RuntimeError):
 
 
 class TuringDBHttpClient:
-    DEFAULT_TIMEOUT = 30
+    DEFAULT_TIMEOUT = 180
 
     def __init__(self, base_url: str, timeout: int = DEFAULT_TIMEOUT):
         self.base_url = base_url.rstrip("/")
@@ -183,30 +210,50 @@ class TuringDBHttpClient:
             """
             MATCH (n)
             WHERE n.id IS NOT NULL
-            RETURN n.id AS id, n.label AS label, n.node_type AS node_type,
-                   n.template_type AS template_type,
-                   n.criticality AS criticality, n.zone AS zone,
-                   n.is_internet_exposed AS is_internet_exposed,
-                   n.has_admin_privileges AS has_admin_privileges,
-                   n.notes AS notes
+            RETURN n.id AS id
             """,
             graph=graph_name,
         )
+        nodes_by_id = {
+            str(row["id"]): {"id": str(row["id"])}
+            for row in node_rows
+            if row.get("id")
+        }
+        for property_name in NODE_SNAPSHOT_PROPERTIES:
+            for row in self._optional_node_property_rows(graph_name, property_name):
+                node_id = str(row.get("id") or "")
+                if node_id in nodes_by_id:
+                    nodes_by_id[node_id][property_name] = row.get("value")
+
         edge_rows = self.query(
             """
             MATCH (src)-[edge]->(dst)
             WHERE src.id IS NOT NULL AND dst.id IS NOT NULL
-            RETURN edge.id AS id, src.id AS source, dst.id AS target,
-                   edge.edge_type AS edge_type, edge.label AS label,
-                   edge.risk_weight AS risk_weight, edge.direction AS direction,
-                   edge.risk_can_spread_both_ways AS risk_can_spread_both_ways,
-                   edge.notes AS notes
+            RETURN src.id AS source, dst.id AS target
             """,
             graph=graph_name,
         )
+        edges = [
+            {
+                "source": str(row.get("source") or ""),
+                "target": str(row.get("target") or ""),
+            }
+            for row in edge_rows
+            if row.get("source") and row.get("target")
+        ]
+        for property_name in EDGE_SNAPSHOT_PROPERTIES:
+            property_rows = self._optional_edge_property_rows(graph_name, property_name)
+            for index, row in enumerate(property_rows):
+                if index >= len(edges):
+                    continue
+                if (
+                    edges[index]["source"] == str(row.get("source") or "")
+                    and edges[index]["target"] == str(row.get("target") or "")
+                ):
+                    edges[index][property_name] = row.get("value")
 
-        nodes = [_normalize_node(row) for row in node_rows if row.get("id")]
-        edges = [_normalize_edge(row) for row in edge_rows if row.get("source") and row.get("target")]
+        nodes = [_normalize_node(row) for row in nodes_by_id.values()]
+        normalised_edges = [_normalize_edge(row) for row in edges]
 
         return {
             "metadata": {
@@ -214,8 +261,45 @@ class TuringDBHttpClient:
                 "source": "turingdb",
             },
             "nodes": nodes,
-            "edges": edges,
+            "edges": normalised_edges,
         }
+
+    def _optional_node_property_rows(
+        self,
+        graph_name: str,
+        property_name: str,
+    ) -> list[dict[str, Any]]:
+        return self._optional_property_rows(
+            f"""
+            MATCH (n)
+            WHERE n.id IS NOT NULL
+            RETURN n.id AS id, n.{property_name} AS value
+            """,
+            graph_name,
+        )
+
+    def _optional_edge_property_rows(
+        self,
+        graph_name: str,
+        property_name: str,
+    ) -> list[dict[str, Any]]:
+        return self._optional_property_rows(
+            f"""
+            MATCH (src)-[edge]->(dst)
+            WHERE src.id IS NOT NULL AND dst.id IS NOT NULL
+            RETURN src.id AS source, dst.id AS target, edge.{property_name} AS value
+            """,
+            graph_name,
+        )
+
+    def _optional_property_rows(self, query: str, graph_name: str) -> list[dict[str, Any]]:
+        try:
+            return self.query(query, graph=graph_name)
+        except TuringDBHttpError as error:
+            message = str(error).lower()
+            if "property type" in message and "not found" in message:
+                return []
+            raise
 
     def _post_json(
         self,
@@ -359,14 +443,17 @@ def _create_edge_query(edge: dict[str, Any]) -> str:
 
 
 def _normalize_node(row: dict[str, Any]) -> dict[str, Any]:
-    node_type = row.get("node_type") or row.get("template_type") or "unknown"
+    node_type = row.get("node_type") or row.get("type") or row.get("template_type") or "unknown"
+    description = row.get("description") or row.get("notes") or ""
     return {
         "id": str(row.get("id") or ""),
         "label": str(row.get("label") or row.get("id") or ""),
+        "type": str(row.get("type") or node_type),
         "node_type": str(node_type),
         "template_type": str(row.get("template_type") or node_type),
         "criticality": str(row.get("criticality") or "medium"),
         "zone": str(row.get("zone") or "internal"),
+        "description": str(description),
         "is_internet_exposed": bool(row.get("is_internet_exposed") or False),
         "has_admin_privileges": bool(row.get("has_admin_privileges") or False),
         "notes": str(row.get("notes") or ""),
@@ -374,18 +461,28 @@ def _normalize_node(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_edge(row: dict[str, Any]) -> dict[str, Any]:
-    edge_type = row.get("edge_type") or "connects_to"
+    edge_type = row.get("edge_type") or row.get("relationship") or "connects_to"
+    description = row.get("description") or row.get("notes") or ""
     return {
         "id": str(row.get("id") or ""),
         "source": str(row.get("source") or ""),
         "target": str(row.get("target") or ""),
         "edge_type": str(edge_type),
+        "relationship": str(row.get("relationship") or edge_type),
         "label": str(row.get("label") or edge_type),
-        "risk_weight": int(row.get("risk_weight") or 50),
+        "risk_weight": _int_or_default(row.get("risk_weight"), 50),
         "direction": str(row.get("direction") or "directional"),
+        "description": str(description),
         "risk_can_spread_both_ways": bool(row.get("risk_can_spread_both_ways") or False),
         "notes": str(row.get("notes") or ""),
     }
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def sdk_available() -> bool:

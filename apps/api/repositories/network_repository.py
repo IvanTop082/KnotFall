@@ -19,6 +19,8 @@ from ..config import (
 from ..turingdb_integration.http_client import (
     TuringDBHttpClient,
     TuringDBHttpError,
+    _cypher_properties,
+    _escape_cypher_string,
     sdk_available,
 )
 
@@ -51,7 +53,7 @@ def _now_iso() -> str:
 
 
 def _safe_network_id(network_id: str) -> str:
-    safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", network_id.strip())
+    safe_id = re.sub(r"[^A-Za-z0-9_]", "_", network_id.strip())
     return safe_id or "network"
 
 
@@ -80,6 +82,9 @@ def _commit_id(network_id: str, version: int, graph: dict[str, Any], message: st
 
 def _version_graph_name(network_id: str, version: int) -> str:
     return f"breachpath_{_safe_network_id(network_id)}_v{version}"
+
+
+METADATA_GRAPH_NAME = "breachpath_metadata"
 
 
 class NetworkRepository:
@@ -368,7 +373,7 @@ class TuringDBMetadataStore:
 
 
 class TuringDBHttpNetworkRepository(NetworkRepository):
-    """Persist BreachPath graph snapshots in TuringDB via Docker HTTP; metadata locally."""
+    """Persist BreachPath graph snapshots and version metadata in TuringDB."""
 
     repository_name = "TuringDBHttpNetworkRepository"
 
@@ -376,6 +381,257 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
         self.url = url.rstrip("/")
         self.client = TuringDBHttpClient(self.url)
         self.metadata_store = metadata_store or TuringDBMetadataStore()
+
+    def _ensure_metadata_graph(self) -> None:
+        if METADATA_GRAPH_NAME not in self.client.list_available_graphs():
+            self.client.create_graph(METADATA_GRAPH_NAME)
+        self.client.ensure_graph_loaded(METADATA_GRAPH_NAME)
+        self.client.set_graph(METADATA_GRAPH_NAME)
+        self.client.checkout_main()
+
+    def _metadata_rows(self, network_id: str | None = None) -> list[dict[str, Any]]:
+        self._ensure_metadata_graph()
+        where_clause = ""
+        if network_id:
+            safe_id = _escape_cypher_string(_safe_network_id(network_id))
+            where_clause = f"WHERE entry.network_id = '{safe_id}'"
+
+        try:
+            return self.client.query(
+                f"""
+                MATCH (entry)
+                {where_clause}
+                RETURN entry.network_id AS network_id,
+                       entry.name AS name,
+                       entry.version AS saved_version,
+                       entry.updated_at AS updated_at,
+                       entry.created_at AS created_at,
+                       entry.commit_id AS commit_id,
+                       entry.message AS message,
+                       entry.node_count AS node_count,
+                       entry.edge_count AS edge_count,
+                       entry.graph_hash AS graph_hash,
+                       entry.turingdb_graph AS turingdb_graph
+                """,
+                graph=METADATA_GRAPH_NAME,
+            )
+        except TuringDBHttpError as error:
+            message = str(error).lower()
+            if "property type" in message and "not found" in message:
+                return []
+            raise
+
+    def _save_metadata_commit(self, saved: dict[str, Any], commit: dict[str, Any]) -> None:
+        self._ensure_metadata_graph()
+        payload = {
+            "metadata_type": "network_version",
+            "network_id": saved["network_id"],
+            "name": saved["name"],
+            "version": int(commit["version"]),
+            "updated_at": saved["updated_at"],
+            "created_at": commit["created_at"],
+            "commit_id": commit["commit_id"],
+            "message": commit.get("message", ""),
+            "node_count": int(commit.get("node_count", 0)),
+            "edge_count": int(commit.get("edge_count", 0)),
+            "graph_hash": commit.get("graph_hash", ""),
+            "turingdb_graph": commit.get("turingdb_graph", ""),
+        }
+        change_id = self.client.new_change(METADATA_GRAPH_NAME)
+        self.client.query(
+            f"CREATE (:BreachPathNetworkVersion {_cypher_properties(payload)})",
+            graph=METADATA_GRAPH_NAME,
+            change=change_id,
+        )
+        self.client.query("COMMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.query("CHANGE SUBMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.checkout_main()
+
+    def _save_analysis_record(
+        self,
+        network_id: str,
+        version: int,
+        analysis: dict[str, Any],
+    ) -> None:
+        self._ensure_metadata_graph()
+        payload = {
+            "metadata_type": "network_analysis",
+            "network_id": _safe_network_id(network_id),
+            "version": int(version),
+            "created_at": _now_iso(),
+            "analysis_json": json.dumps(analysis, sort_keys=True),
+        }
+        change_id = self.client.new_change(METADATA_GRAPH_NAME)
+        self.client.query(
+            f"CREATE (:BreachPathNetworkAnalysis {_cypher_properties(payload)})",
+            graph=METADATA_GRAPH_NAME,
+            change=change_id,
+        )
+        self.client.query("COMMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.query("CHANGE SUBMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.checkout_main()
+
+    def _mark_turingdb_network_deleted(self, network_id: str) -> None:
+        self._ensure_metadata_graph()
+        payload = {
+            "metadata_type": "network_deleted",
+            "network_id": _safe_network_id(network_id),
+            "deleted_at": _now_iso(),
+        }
+        change_id = self.client.new_change(METADATA_GRAPH_NAME)
+        self.client.query(
+            f"CREATE (:BreachPathNetworkDeleted {_cypher_properties(payload)})",
+            graph=METADATA_GRAPH_NAME,
+            change=change_id,
+        )
+        self.client.query("COMMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.query("CHANGE SUBMIT", graph=METADATA_GRAPH_NAME, change=change_id)
+        self.client.checkout_main()
+
+    def _deleted_network_timestamps(self) -> dict[str, str]:
+        self._ensure_metadata_graph()
+        try:
+            rows = self.client.query(
+                """
+                MATCH (entry)
+                RETURN entry.network_id AS network_id,
+                       entry.deleted_at AS deleted_at
+                """,
+                graph=METADATA_GRAPH_NAME,
+            )
+        except TuringDBHttpError as error:
+            message = str(error).lower()
+            if "property type" in message and "not found" in message:
+                return {}
+            raise
+
+        deleted: dict[str, str] = {}
+        for row in rows:
+            network_id = _safe_network_id(str(row.get("network_id") or ""))
+            deleted_at = str(row.get("deleted_at") or "")
+            if not network_id or not deleted_at:
+                continue
+            if deleted_at > deleted.get(network_id, ""):
+                deleted[network_id] = deleted_at
+        return deleted
+
+    def _network_deleted_at(self, network_id: str) -> str | None:
+        return self._deleted_network_timestamps().get(_safe_network_id(network_id))
+
+    @staticmethod
+    def _saved_is_deleted(saved: dict[str, Any] | None, deleted_at: str | None) -> bool:
+        if not saved or not deleted_at:
+            return False
+        return str(saved.get("updated_at") or "") <= deleted_at
+
+    def _saved_from_turingdb_metadata(self, network_id: str) -> dict[str, Any] | None:
+        rows = self._metadata_rows(network_id)
+        if not rows:
+            return None
+        saved = _saved_from_metadata_rows(rows)
+        if self._saved_is_deleted(saved, self._network_deleted_at(network_id)):
+            return None
+        return saved
+
+    def _list_from_turingdb_metadata(
+        self,
+        deleted_timestamps: dict[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        deleted_timestamps = deleted_timestamps or self._deleted_network_timestamps()
+        grouped_rows: dict[str, list[dict[str, Any]]] = {}
+        for row in self._metadata_rows():
+            safe_id = _safe_network_id(str(row.get("network_id") or ""))
+            if not safe_id:
+                continue
+            grouped_rows.setdefault(safe_id, []).append(row)
+
+        saved_networks = [
+            _saved_from_metadata_rows(rows)
+            for rows in grouped_rows.values()
+            if rows
+        ]
+        return [
+            saved
+            for saved in saved_networks
+            if saved and not self._saved_is_deleted(saved, deleted_timestamps.get(saved["network_id"]))
+        ]
+
+    def _migrate_local_metadata_to_turingdb(self) -> None:
+        try:
+            existing_ids = {
+                _safe_network_id(str(row.get("network_id") or ""))
+                for row in self._metadata_rows()
+                if row.get("commit_id")
+            }
+        except Exception:
+            existing_ids = set()
+
+        for saved in self.metadata_store.list_networks():
+            if saved.get("network_id") in existing_ids:
+                continue
+            for commit in saved.get("history", []):
+                if commit.get("turingdb_graph"):
+                    try:
+                        self._save_metadata_commit(saved, commit)
+                    except Exception:
+                        continue
+
+    def _discover_networks_from_turingdb_graphs(
+        self,
+        deleted_network_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        deleted_network_ids = deleted_network_ids or set()
+        discovered: dict[str, dict[str, Any]] = {}
+        try:
+            graph_names = self.client.list_available_graphs()
+        except Exception:
+            return []
+
+        for graph_name in graph_names:
+            match = re.fullmatch(r"breachpath_(.+)_v(\d+)", graph_name)
+            if not match:
+                continue
+            safe_id = _safe_network_id(match.group(1))
+            version = int(match.group(2))
+            if safe_id in deleted_network_ids:
+                continue
+            if "http_persistence_proof" in safe_id or safe_id in {"http_test", "codex_turingdb_test"}:
+                continue
+            existing = discovered.get(safe_id)
+            if existing and int(existing["version"]) >= version:
+                continue
+            discovered[safe_id] = {
+                "network_id": safe_id,
+                "name": safe_id.replace("_", " ").replace("-", " ").title(),
+                "version": version,
+                "updated_at": "",
+                "latest_turingdb_graph": graph_name,
+                "history": [
+                    {
+                        "commit_id": f"discovered-{safe_id}-v{version}",
+                        "version": version,
+                        "message": "Discovered existing TuringDB graph snapshot",
+                        "created_at": "",
+                        "node_count": 0,
+                        "edge_count": 0,
+                        "graph_hash": "",
+                        "turingdb_graph": graph_name,
+                        "analyses": [],
+                    }
+                ],
+                "storage_backend": "turingdb_http",
+            }
+
+        return list(discovered.values())
+
+    def _discovered_network(self, network_id: str) -> dict[str, Any] | None:
+        safe_id = _safe_network_id(network_id)
+        if safe_id in self._deleted_network_timestamps():
+            return None
+        for saved in self._discover_networks_from_turingdb_graphs():
+            if saved["network_id"] == safe_id:
+                return saved
+        return None
 
     def save_network(
         self,
@@ -386,7 +642,18 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
     ) -> SaveResult:
         self.ensure_available()
         safe_id = _safe_network_id(network_id)
-        saved = self.metadata_store.get_network(safe_id)
+        saved = (
+            _saved_from_metadata_rows(self._metadata_rows(safe_id))
+            or self.metadata_store.get_network(safe_id)
+            or next(
+                (
+                    discovered
+                    for discovered in self._discover_networks_from_turingdb_graphs(set())
+                    if discovered["network_id"] == safe_id
+                ),
+                None,
+            )
+        )
         version = int(saved.get("version", 0)) + 1 if saved else 1
         node_count, edge_count = _graph_counts(graph)
         created_at = _now_iso()
@@ -414,17 +681,16 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
         history = [*saved.get("history", [])] if saved else []
         history.append(commit)
 
-        self.metadata_store.upsert_network(
-            {
-                "network_id": safe_id,
-                "name": resolved_name,
-                "version": version,
-                "updated_at": created_at,
-                "latest_turingdb_graph": turingdb_graph,
-                "history": history,
-                "storage_backend": "turingdb_http",
-            }
-        )
+        saved_payload = {
+            "network_id": safe_id,
+            "name": resolved_name,
+            "version": version,
+            "updated_at": created_at,
+            "latest_turingdb_graph": turingdb_graph,
+            "history": history,
+            "storage_backend": "turingdb_http",
+        }
+        self._save_metadata_commit(saved_payload, commit)
 
         return SaveResult(
             network_id=safe_id,
@@ -441,7 +707,13 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
 
     def get_network(self, network_id: str) -> dict[str, Any]:
         self.ensure_available()
-        saved = self.metadata_store.get_network(network_id)
+        deleted_at = self._network_deleted_at(network_id)
+        saved = (
+            self._saved_from_turingdb_metadata(network_id)
+        )
+        if not saved and deleted_at:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+        saved = saved or self.metadata_store.get_network(network_id) or self._discovered_network(network_id)
         if not saved:
             raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
 
@@ -461,8 +733,17 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
 
     def list_networks(self) -> list[dict[str, Any]]:
         self.ensure_available()
+        self._migrate_local_metadata_to_turingdb()
+        deleted_timestamps = self._deleted_network_timestamps()
+        saved_by_id = {
+            saved["network_id"]: saved
+            for saved in self._list_from_turingdb_metadata(deleted_timestamps)
+        }
+        for saved in self._discover_networks_from_turingdb_graphs(set(deleted_timestamps.keys())):
+            saved_by_id.setdefault(saved["network_id"], saved)
+
         summaries = []
-        for saved in self.metadata_store.list_networks():
+        for saved in saved_by_id.values():
             latest_commit = _find_version(saved, int(saved.get("version", 0)))
             summaries.append(
                 {
@@ -475,21 +756,33 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
                     "storage_backend": "turingdb_http",
                 }
             )
-        return summaries
+        return sorted(summaries, key=lambda entry: entry.get("updated_at") or "", reverse=True)
 
     def delete_network(self, network_id: str) -> None:
         self.ensure_available()
-        self.metadata_store.delete_network(network_id)
+        self._mark_turingdb_network_deleted(network_id)
 
     def get_history(self, network_id: str) -> list[dict[str, Any]]:
-        saved = self.metadata_store.get_network(network_id)
+        deleted_at = self._network_deleted_at(network_id)
+        saved = (
+            self._saved_from_turingdb_metadata(network_id)
+        )
+        if not saved and deleted_at:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+        saved = saved or self.metadata_store.get_network(network_id) or self._discovered_network(network_id)
         if not saved:
             raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
         return [_version_summary(commit) for commit in saved.get("history", [])]
 
     def get_version(self, network_id: str, version: int) -> dict[str, Any]:
         self.ensure_available()
-        saved = self.metadata_store.get_network(network_id)
+        deleted_at = self._network_deleted_at(network_id)
+        saved = (
+            self._saved_from_turingdb_metadata(network_id)
+        )
+        if not saved and deleted_at:
+            raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
+        saved = saved or self.metadata_store.get_network(network_id) or self._discovered_network(network_id)
         if not saved:
             raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
 
@@ -548,7 +841,7 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
         analysis: dict[str, Any],
     ) -> None:
         self.ensure_available()
-        saved = self.metadata_store.get_network(network_id)
+        saved = self._saved_from_turingdb_metadata(network_id) or self.metadata_store.get_network(network_id)
         if not saved:
             raise FileNotFoundError(f"Saved network not found: {_safe_network_id(network_id)}")
 
@@ -557,7 +850,7 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
             raise FileNotFoundError(f"Version {version} not found for network {network_id}")
 
         commit.setdefault("analyses", []).append(analysis)
-        self.metadata_store.upsert_network(saved)
+        self._save_analysis_record(network_id, version, analysis)
 
     def storage_status(self) -> dict[str, Any]:
         reachable, reach_message = self.client.is_reachable()
@@ -574,7 +867,7 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
                 "http_server_reachable": False,
                 "graph_writes_supported": False,
                 "graph_storage": "turingdb",
-                "metadata_storage": "local_json",
+                "metadata_storage": "turingdb",
                 "storage_backend": "turingdb_http",
                 "message": reach_message
                 or "TuringDB Docker server is not reachable. Start Docker first.",
@@ -600,13 +893,13 @@ class TuringDBHttpNetworkRepository(NetworkRepository):
             "http_server_reachable": True,
             "graph_writes_supported": graph_writes_supported,
             "graph_storage": "turingdb",
-            "metadata_storage": "local_json",
+            "metadata_storage": "turingdb",
             "storage_backend": "turingdb_http",
             "message": (
                 api_message
                 if api_known
                 else api_message
-                + " Graphs stored in TuringDB; metadata stored locally because TuringDB metadata API was not found."
+                + " Graph and metadata writes are expected through the TuringDB HTTP API."
             ),
         }
 
@@ -697,6 +990,54 @@ def _version_summary(commit: dict[str, Any]) -> dict[str, Any]:
         "edge_count": int(commit.get("edge_count", 0)),
         "analysed": bool(analyses),
         "analysis_count": len(analyses),
+    }
+
+
+def _saved_from_metadata_rows(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    commits = []
+
+    for row in rows:
+        network_id = _safe_network_id(str(row.get("network_id") or ""))
+        if not network_id:
+            continue
+
+        version = int(row.get("saved_version") or row.get("version") or 0)
+        if version <= 0:
+            continue
+        if not row.get("commit_id") or not row.get("turingdb_graph"):
+            continue
+
+        commits.append(
+            {
+                "commit_id": str(row.get("commit_id") or ""),
+                "version": version,
+                "message": str(row.get("message") or ""),
+                "created_at": str(row.get("created_at") or row.get("updated_at") or ""),
+                "node_count": int(row.get("node_count") or 0),
+                "edge_count": int(row.get("edge_count") or 0),
+                "graph_hash": str(row.get("graph_hash") or ""),
+                "turingdb_graph": str(row.get("turingdb_graph") or ""),
+                "analyses": [],
+            }
+        )
+
+    if not commits:
+        return None
+
+    commits.sort(key=lambda commit: int(commit["version"]))
+    latest = commits[-1]
+    first_row = rows[0]
+    network_id = _safe_network_id(str(first_row.get("network_id") or ""))
+    name = str(first_row.get("name") or network_id)
+
+    return {
+        "network_id": network_id,
+        "name": name,
+        "version": int(latest["version"]),
+        "updated_at": latest.get("created_at", ""),
+        "latest_turingdb_graph": latest.get("turingdb_graph", ""),
+        "history": commits,
+        "storage_backend": "turingdb_http",
     }
 
 

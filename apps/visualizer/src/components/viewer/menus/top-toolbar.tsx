@@ -2,10 +2,11 @@ import TuringButton from '@/components/base/turing-button'
 import {
   formatStorageStatusLabel,
   getBreachPathStorageStatus,
+  loadBreachPathNetworkVersion,
   saveBreachPathNetworkVersionForNetwork,
   storageStatusBadgeClass,
 } from '@/api/breachpath'
-import { buildGraphPayload, networkIdFromName } from '@/breachpath/graph-utils'
+import { buildGraphPayload, graphFingerprint, networkIdFromName } from '@/breachpath/graph-utils'
 import { useBreachPathBuilderStore, useBreachPathStore, useCanvasStore, useVisStore } from '@/stores'
 import { CenterForceSwitch } from './actions/center-force-switch'
 import { NodeShapeSwitch } from './actions/node-shape-switch'
@@ -23,6 +24,7 @@ export const TuringTopToolBar = () => {
   const activePanel = useBreachPathBuilderStore((state) => state.activePanel)
   const setActivePanel = useBreachPathBuilderStore((state) => state.setActivePanel)
   const setStatusMessage = useBreachPathBuilderStore((state) => state.setStatusMessage)
+  const requestLibraryRefresh = useBreachPathBuilderStore((state) => state.requestLibraryRefresh)
   const analysisStatus = useBreachPathStore((state) => state.status)
   const savedNetworkId = useBreachPathStore((state) => state.savedNetworkId)
   const savedNetworkName = useBreachPathStore((state) => state.savedNetworkName)
@@ -66,14 +68,34 @@ export const TuringTopToolBar = () => {
         graph: currentGraph,
         message,
       })
+      const savedSnapshot = await loadBreachPathNetworkVersion(
+        backendResult.network_id,
+        backendResult.version
+      )
+      const sentNodeCount = currentGraph.nodes.length
+      const sentEdgeCount = currentGraph.edges.length
+      const savedNodeCount = savedSnapshot.graph.nodes.length
+      const savedEdgeCount = savedSnapshot.graph.edges.length
+
+      if (savedNodeCount !== sentNodeCount || savedEdgeCount !== sentEdgeCount) {
+        throw new Error(
+          `TuringDB saved v${backendResult.version}, but returned ${savedNodeCount}/${sentNodeCount} nodes and ${savedEdgeCount}/${sentEdgeCount} edges.`
+        )
+      }
+
       setSavedNetworkVersion(
         backendResult.network_id,
         backendResult.version,
         backendResult.name ?? name,
-        undefined
+        graphFingerprint(currentGraph)
       )
-      setStatusMessage(`Saved ${backendResult.name ?? name} v${backendResult.version} to TuringDB.`)
+      requestLibraryRefresh()
+      setActivePanel('history')
+      setStatusMessage(
+        `Saved ${backendResult.name ?? name} v${backendResult.version} to TuringDB (${sentNodeCount} nodes / ${sentEdgeCount} edges).`
+      )
     } catch (error) {
+      setActivePanel('save')
       setStatusMessage(
         error instanceof Error ? error.message : 'Could not save version to TuringDB.'
       )

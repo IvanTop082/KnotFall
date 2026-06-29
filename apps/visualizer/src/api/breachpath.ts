@@ -281,6 +281,32 @@ export function getBreachPathApiBaseUrl() {
   return (import.meta.env.VITE_BREACHPATH_API_URL || 'http://localhost:8000').replace(/\/+$/, '')
 }
 
+const ANALYSIS_REQUEST_TIMEOUT_MS = 30000
+
+async function fetchAnalysisWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit
+) {
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), ANALYSIS_REQUEST_TIMEOUT_MS)
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    })
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(
+        'Analysis timed out. Check that the backend is running and TuringDB is responding.'
+      )
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 async function parseAnalysisResponse(response: Response) {
   if (!response.ok) {
     let message = `BreachPath API returned ${response.status}`
@@ -301,7 +327,7 @@ async function parseAnalysisResponse(response: Response) {
 export async function getCompromisedNodeAnalysis(
   nodeId: string
 ): Promise<BreachPathCompromisedNodeAnalysis> {
-  const response = await fetch(
+  const response = await fetchAnalysisWithTimeout(
     `${getBreachPathApiBaseUrl()}/analysis/compromised/${encodeURIComponent(nodeId)}`
   )
 
@@ -314,7 +340,7 @@ export async function postCompromisedNodeAnalysis(
   simulationType: BreachPathSimulationType = 'compromise',
   metadata: BreachPathAnalysisMetadata = {}
 ): Promise<BreachPathCompromisedNodeAnalysis> {
-  const response = await fetch(`${getBreachPathApiBaseUrl()}/analysis/compromised`, {
+  const response = await fetchAnalysisWithTimeout(`${getBreachPathApiBaseUrl()}/analysis/compromised`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

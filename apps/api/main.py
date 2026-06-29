@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+import threading
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -716,25 +717,34 @@ def _record_version_analysis(network_id, version, analysis):
     if not network_id or not version:
         return
 
-    try:
-        repository = _storage_repository()
-        repository.record_analysis(
-            network_id=network_id,
-            version=int(version),
-            analysis={
-                "analysed_at": analysis.get("analysed_at"),
-                "graph_hash": analysis.get("graph_hash"),
-                "node_id": analysis["compromised_node"]["id"],
-                "simulation_type": analysis.get("simulation_type"),
-                "risk_score": analysis.get("risk_score", 0),
-                "risk_level": analysis.get("risk_level", "none"),
-                "highlighted_nodes": analysis.get("highlighted_nodes", []),
-                "highlighted_edges": analysis.get("highlighted_edges", []),
-                "recommendations": analysis.get("recommendations", []),
-            },
-        )
-    except Exception:
-        return
+    analysis_record = {
+        "analysed_at": analysis.get("analysed_at"),
+        "graph_hash": analysis.get("graph_hash"),
+        "node_id": analysis["compromised_node"]["id"],
+        "simulation_type": analysis.get("simulation_type"),
+        "risk_score": analysis.get("risk_score", 0),
+        "risk_level": analysis.get("risk_level", "none"),
+        "highlighted_nodes": analysis.get("highlighted_nodes", []),
+        "highlighted_edges": analysis.get("highlighted_edges", []),
+        "recommendations": analysis.get("recommendations", []),
+    }
+
+    def record_in_background():
+        try:
+            repository = _storage_repository()
+            repository.record_analysis(
+                network_id=network_id,
+                version=int(version),
+                analysis=analysis_record,
+            )
+        except Exception:
+            return
+
+    threading.Thread(
+        target=record_in_background,
+        name="breachpath-analysis-record",
+        daemon=True,
+    ).start()
 
 
 def _build_compromised_node_analysis(

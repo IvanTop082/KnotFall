@@ -1,8 +1,10 @@
-# BreachPath
+# KnotFall
 
-BreachPath is a defensive cyber graph tool for exploring what an attacker may be able to reach from a compromised machine.
+KnotFall is a defensive cyber graph tool for exploring what an attacker may be able to reach from a compromised machine.
 
 The project is currently under active development and is not the full final product yet. It is a hackathon MVP that already demonstrates graph-based exposure analysis, risk highlighting, recommendations, and saved network versions, but more hardening and polish are still planned.
+
+Demo video: https://youtu.be/1NA7XcIOGPY
 
 ## Current State
 
@@ -13,7 +15,7 @@ The project is currently under active development and is not the full final prod
 
 ## Local URLs
 
-- BreachPath visualizer: `http://localhost:3001`
+- KnotFall visualizer: `http://localhost:3001`
 - FastAPI backend: `http://localhost:8000`
 - TuringDB API: `http://localhost:16666`
 - TuringDB reference visualizer: `http://localhost:18080`
@@ -42,9 +44,9 @@ In a second PowerShell window:
 docker compose -f docker-compose.dev.yml run --rm api python apps/api/turingdb_integration/import_demo_network.py
 ```
 
-This creates the BreachPath demo graph used by the visualizer.
+This creates the KnotFall demo graph used by the visualizer.
 
-### 3. Start the BreachPath visualizer
+### 3. Start the KnotFall visualizer
 
 In a third PowerShell window:
 
@@ -72,7 +74,7 @@ Invoke-RestMethod http://localhost:8000/analysis/compromised/workstation-17
 ## Demo Flow
 
 1. Open `http://localhost:3001`.
-2. Load or view the BreachPath demo graph.
+2. Load or view the KnotFall demo graph.
 3. Select a device node.
 4. Run compromise analysis.
 5. Review highlighted exposure paths, affected systems, risk, and recommendations.
